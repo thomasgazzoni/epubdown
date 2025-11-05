@@ -446,10 +446,18 @@ export const PageSlider = ({
 
   // Value <-> Y position conversions
   const valueToY = (value: number): number => {
+    // Special case: single page or empty - no range to map
+    if (totalPages <= 1) {
+      return containerTop;
+    }
     return containerTop + (value - 1) * (viewportHeight / (totalPages - 1));
   };
 
   const yToValue = (y: number): number => {
+    // Special case: single page or empty - always return page 1
+    if (totalPages <= 1) {
+      return 1;
+    }
     const relativeY = y - containerTop;
     const ratio = relativeY / viewportHeight;
     return 1 + ratio * (totalPages - 1);

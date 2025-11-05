@@ -148,3 +148,6 @@ __screenshots__
 
 # Test fixtures
 packages/pdf-render/test/src/test_pdfs
+
+
+packages/core/epub-dumper-*

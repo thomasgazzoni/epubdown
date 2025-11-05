@@ -5,6 +5,7 @@ import type { PdfReaderStore } from "../stores/PdfReaderStore";
 import { makeVisibilityTracker } from "./VisibilityWindow";
 import { ZOOM_PPI_LEVELS } from "./pdfConstants";
 import { useKeyboardShortcuts } from "./useKeyboardShortcuts";
+import { PageSlider } from "../slider/PageSlider";
 
 /**
  * ARCHITECTURE: PDF Viewer Component
@@ -90,6 +91,8 @@ export const PdfViewer = observer(({ store }: PdfViewerProps) => {
   );
   // currentPageObserver: Fine-grained observer for current page tracking
   const currentPageObserverRef = useRef<IntersectionObserver | null>(null);
+  // Flag to prevent intersection observer from updating page during programmatic scrolls
+  const isProgrammaticScrollRef = useRef(false);
 
   // ═══════════════════════════════════════════════════════════════
   // DEVICE PIXEL RATIO TRACKING
@@ -178,11 +181,21 @@ export const PdfViewer = observer(({ store }: PdfViewerProps) => {
 
     lastManualPageRef.current = store.currentPage;
 
+    // Prevent intersection observer from interfering during programmatic scroll
+    isProgrammaticScrollRef.current = true;
+
     // Scroll to the page
     const slot = slotRefs.current[store.currentPageIndex];
     if (slot && containerRef.current) {
       slot.scrollIntoView({ behavior: "auto", block: "start" });
     }
+
+    // Clear flag after scroll settles
+    const timer = setTimeout(() => {
+      isProgrammaticScrollRef.current = false;
+    }, 100);
+
+    return () => clearTimeout(timer);
   }, [store.currentPage, store.currentPageIndex]);
 
   // ResizeObserver for container size changes
@@ -209,13 +222,45 @@ export const PdfViewer = observer(({ store }: PdfViewerProps) => {
     calculateCurrentPosition,
     maxPpi,
     onNavigateToPage: (page: number) => {
+      // Prevent intersection observer from interfering during programmatic scroll
+      isProgrammaticScrollRef.current = true;
+
       store.setCurrentPage(page);
+      lastManualPageRef.current = page;
+
       const slot = slotRefs.current[page - 1];
       if (slot && containerRef.current) {
         slot.scrollIntoView({ behavior: "smooth", block: "start" });
       }
+
+      // Clear flag after scroll settles (longer timeout for smooth scrolling)
+      setTimeout(() => {
+        isProgrammaticScrollRef.current = false;
+      }, 500);
     },
   });
+
+  // Handle page changes from PageSlider
+  const handlePageSliderChange = useCallback(
+    (page: number) => {
+      // Prevent intersection observer from interfering during programmatic scroll
+      isProgrammaticScrollRef.current = true;
+
+      store.setCurrentPage(page);
+      lastManualPageRef.current = page;
+
+      const slot = slotRefs.current[page - 1];
+      if (slot && containerRef.current) {
+        slot.scrollIntoView({ behavior: "auto", block: "start" });
+      }
+
+      // Clear flag after scroll settles (even with auto behavior, allow some time)
+      setTimeout(() => {
+        isProgrammaticScrollRef.current = false;
+      }, 100);
+    },
+    [store],
+  );
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -232,6 +277,9 @@ export const PdfViewer = observer(({ store }: PdfViewerProps) => {
     // Page with highest visibility becomes the current page
     const currentPageObserver = new IntersectionObserver(
       (entries) => {
+        // Skip updates during programmatic scrolls to prevent race conditions
+        if (isProgrammaticScrollRef.current) return;
+
         // Update ratios map with changed entries
         for (const entry of entries) {
           const index = Number((entry.target as HTMLElement).dataset.index);
@@ -642,11 +690,11 @@ export const PdfViewer = observer(({ store }: PdfViewerProps) => {
         </div>
       )}
       {/* Page indicator */}
-      {pageCount > 0 && (
+      {/* {pageCount > 0 && (
         <div className="fixed bottom-4 right-4 z-10 bg-white rounded-lg shadow px-3 py-2 text-sm text-gray-600">
           Page {store.currentPage} of {pageCount}
         </div>
-      )}
+      )} */}
 
       {/* Zoom controls */}
       {pageCount > 0 && (
@@ -697,6 +745,19 @@ export const PdfViewer = observer(({ store }: PdfViewerProps) => {
           >
             100%
           </button>
+        </div>
+      )}
+
+      {/* Page slider navigation */}
+      {pageCount > 0 && (
+        <div className="fixed top-0 right-0 h-screen pr-4 pt-8 pb-8 flex items-center z-10">
+          <PageSlider
+            currentPage={store.currentPage}
+            totalPages={pageCount}
+            onPageChange={handlePageSliderChange}
+            height="calc(100vh - 4rem)"
+            enableKeyboard={false}
+          />
         </div>
       )}
 

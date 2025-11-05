@@ -2,6 +2,7 @@ import { Route, Router, Switch } from "wouter";
 import CommandPalettePage from "../pages/CommandPalettePage";
 import { UploadErrorsPrototype } from "../prototype/UploadErrors";
 import SliderPrototype from "../prototype/slider/SliderPrototype";
+import PageSliderDemo from "../prototype/pageSlider/PageSliderDemo";
 import { AddBookPage } from "./pages/AddBookPage";
 import { Library } from "./Library";
 import { ReaderPage } from "./ReaderPage";
@@ -25,6 +26,7 @@ export function AppRouter() {
           component={CommandPalettePage}
         />
         <Route path="/prototype/slider" component={SliderPrototype} />
+        <Route path="/prototype/page-slider" component={PageSliderDemo} />
         <Route>
           <NotFound />
         </Route>

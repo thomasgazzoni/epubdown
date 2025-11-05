@@ -1060,7 +1060,7 @@ export class PdfReaderStore {
    * Check if zoom out is possible
    */
   canZoomOut(zoomLevels: number[]): boolean {
-    let i = zoomLevels.indexOf(this.ppi);
+    const i = zoomLevels.indexOf(this.ppi);
     if (i === -1) {
       // Not at a standard level, check if we can zoom out
       return this.ppi > (zoomLevels[0] ?? 72);

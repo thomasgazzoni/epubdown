@@ -47,12 +47,17 @@ export interface PageSizeMessage {
   pageIndex0: number;
 }
 
+export interface HeartbeatMessage {
+  type: "heartbeat";
+}
+
 export type WorkerRequest =
   | InitMessage
   | InitDebugMessage
   | RenderMessage
   | CancelMessage
-  | PageSizeMessage;
+  | PageSizeMessage
+  | HeartbeatMessage;
 
 // Worker response types
 export interface ReadyResponse {
@@ -80,11 +85,17 @@ export interface PageSizeResponse {
   hPt: number;
 }
 
+export interface PongResponse {
+  type: "pong";
+  timestamp: number;
+}
+
 export type WorkerResponse =
   | ReadyResponse
   | BitmapResponse
   | ErrorResponse
-  | PageSizeResponse;
+  | PageSizeResponse
+  | PongResponse;
 
 // Worker state
 let engine: PDFEngine | null = null;
@@ -112,6 +123,9 @@ self.onmessage = async (e: MessageEvent<WorkerRequest>) => {
       case "initDebug":
         DEBUG = true;
         wlog("Debug logging enabled");
+        return;
+      case "heartbeat":
+        handleHeartbeat();
         return;
       case "init":
         await handleInit(msg);
@@ -300,6 +314,19 @@ async function handlePageSize(msg: PageSizeMessage): Promise<void> {
   };
 
   self.postMessage(response);
+}
+
+/**
+ * Handle heartbeat ping from main thread
+ * Responds immediately with a pong to indicate worker is alive
+ */
+function handleHeartbeat(): void {
+  const response: PongResponse = {
+    type: "pong",
+    timestamp: performance.now(),
+  };
+  self.postMessage(response);
+  wlog("Heartbeat pong sent");
 }
 
 export {};

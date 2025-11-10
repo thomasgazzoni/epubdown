@@ -263,12 +263,22 @@ export const PdfDebugOverlay = observer(
                   </span>
                 </div>
                 {store.isWorkerActive && (
-                  <div className="flex justify-between">
-                    <span className="text-gray-400">Pending tasks:</span>
-                    <span className="font-bold">
-                      {store.workerPendingCount}
-                    </span>
-                  </div>
+                  <>
+                    <div className="flex justify-between">
+                      <span className="text-gray-400">Pending tasks:</span>
+                      <span className="font-bold">
+                        {store.workerPendingCount}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-400">Responsive:</span>
+                      <span
+                        className={`font-bold ${store.isWorkerResponsive ? "text-green-400" : "text-red-400"}`}
+                      >
+                        {store.isWorkerResponsive ? "Yes" : "No"}
+                      </span>
+                    </div>
+                  </>
                 )}
               </div>
             </div>

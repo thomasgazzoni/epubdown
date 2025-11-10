@@ -1101,6 +1101,14 @@ export class PdfReaderStore {
   }
 
   /**
+   * Check if Worker is responsive (receiving heartbeat responses)
+   * Returns false if worker hasn't responded to heartbeat within timeout
+   */
+  get isWorkerResponsive(): boolean {
+    return this.workerManager?.isWorkerResponsive ?? true;
+  }
+
+  /**
    * Load page size (dimensions) if not already loaded
    * @param pageNum 1-based page number
    */

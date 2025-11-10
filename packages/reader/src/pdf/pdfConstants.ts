@@ -5,4 +5,4 @@ export const DEFAULT_PAGE_PT = {
   h: 792, // US Letter height in points
 };
 
-export const PPI_TO_DPI = 72; // Points per inch
+export const POINTS_PER_INCH = 72; // Points per inch (PDF coordinate system)

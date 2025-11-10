@@ -39,6 +39,7 @@ export class RenderScheduler {
   private readonly maxConcurrent: number;
   private readonly queue: { getNextTask(): RenderTask | null };
   private readonly worker: RenderWorker;
+  private readonly shouldRetry?: (task: RenderTask) => boolean;
   private running = 0;
   // Track retry counts per page number (1-based)
   private retryCount = new Map<number, number>();
@@ -51,12 +52,14 @@ export class RenderScheduler {
     worker: RenderWorker;
     maxRetries?: number;
     retryDelayMs?: number;
+    shouldRetry?: (task: RenderTask) => boolean;
   }) {
     this.maxConcurrent = opts.maxConcurrent;
     this.queue = opts.queue;
     this.worker = opts.worker;
     this.maxRetries = opts.maxRetries ?? 1;
     this.retryDelayMs = opts.retryDelayMs ?? 100;
+    this.shouldRetry = opts.shouldRetry;
   }
 
   /**
@@ -88,6 +91,12 @@ export class RenderScheduler {
     } catch (err) {
       // Don't retry if task was aborted
       if (task.abortSignal.aborted) {
+        this.retryCount.delete(task.pageNumber);
+        return;
+      }
+
+      // Check if we should retry this task (e.g., page may have left render window)
+      if (this.shouldRetry && !this.shouldRetry(task)) {
         this.retryCount.delete(task.pageNumber);
         return;
       }

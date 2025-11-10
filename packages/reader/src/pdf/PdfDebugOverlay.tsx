@@ -69,8 +69,12 @@ export const PdfDebugOverlay = observer(
     useEffect(() => {
       const updateMemoryStats = () => {
         setBitmapMB(store.bitmapMemoryBytes / 1024 / 1024);
+        // Guard against negative values due to accounting races
         setCanvasMB(
-          (store.canvasBytes - store.bitmapMemoryBytes) / 1024 / 1024,
+          Math.max(
+            0,
+            (store.canvasBytes - store.bitmapMemoryBytes) / 1024 / 1024,
+          ),
         );
         setThumbCount(store.thumbCount);
         setFullBitmapCount(store.fullBitmapCount);

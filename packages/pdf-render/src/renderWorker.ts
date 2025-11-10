@@ -228,10 +228,8 @@ async function handleRender(msg: RenderMessage): Promise<void> {
     const offscreen = new OffscreenCanvas(1, 1);
 
     // Render to OffscreenCanvas
-    // Note: The renderToCanvas method expects HTMLCanvasElement, but
-    // OffscreenCanvas has the same API for 2D context, so this works
     // The engine will size the canvas based on page dimensions and PPI
-    await (page as any).renderToCanvas(offscreen as any, ppi);
+    await page.renderToCanvas(offscreen, ppi);
 
     // Check if cancelled after rendering
     if (!activeTasks.has(taskId)) {

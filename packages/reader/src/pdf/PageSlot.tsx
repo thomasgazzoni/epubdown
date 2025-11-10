@@ -4,6 +4,13 @@ import type { PageData } from "@epubdown/pdf-render";
 import type { PdfReaderStore } from "../stores/PdfReaderStore";
 
 /**
+ * Feature flag for bitmaprenderer optimization
+ * When true, uses bitmaprenderer context for zero-copy bitmap transfer
+ * When false, uses 2D context with drawImage (safer, no flashing)
+ */
+const USE_BITMAP_RENDERER = false;
+
+/**
  * Canvas/Bitmap display component with efficient rendering
  *
  * This component handles displaying ImageBitmaps or HTMLCanvasElements:
@@ -84,12 +91,42 @@ const CanvasHost: React.FC<{
         bmCanvas.height = bitmap.height;
       }
 
-      // Use 2D context to draw bitmap (don't transfer ownership)
-      // Note: transferFromImageBitmap would detach the bitmap, causing flashing
-      const ctx2d = bmCanvas.getContext("2d");
-      if (ctx2d) {
-        ctx2d.clearRect(0, 0, bmCanvas.width, bmCanvas.height);
-        ctx2d.drawImage(bitmap, 0, 0);
+      // Optional: Try bitmaprenderer for zero-copy transfer when enabled
+      if (USE_BITMAP_RENDERER) {
+        const ctx = bmCanvas.getContext(
+          "bitmaprenderer",
+        ) as ImageBitmapRenderingContext | null;
+        if (ctx) {
+          // Clone the bitmap to avoid detaching the cached one
+          createImageBitmap(bitmap)
+            .then((cloned) => {
+              ctx.transferFromImageBitmap(cloned);
+            })
+            .catch((err) => {
+              console.warn("[PageSlot] createImageBitmap failed:", err);
+              // Fallback to 2D context
+              const ctx2d = bmCanvas.getContext("2d");
+              if (ctx2d) {
+                ctx2d.clearRect(0, 0, bmCanvas.width, bmCanvas.height);
+                ctx2d.drawImage(bitmap, 0, 0);
+              }
+            });
+        } else {
+          // Fallback: Use 2D context to draw bitmap
+          const ctx2d = bmCanvas.getContext("2d");
+          if (ctx2d) {
+            ctx2d.clearRect(0, 0, bmCanvas.width, bmCanvas.height);
+            ctx2d.drawImage(bitmap, 0, 0);
+          }
+        }
+      } else {
+        // Default: Use 2D context to draw bitmap (don't transfer ownership)
+        // Note: transferFromImageBitmap would detach the bitmap, causing flashing
+        const ctx2d = bmCanvas.getContext("2d");
+        if (ctx2d) {
+          ctx2d.clearRect(0, 0, bmCanvas.width, bmCanvas.height);
+          ctx2d.drawImage(bitmap, 0, 0);
+        }
       }
 
       // Only show loading overlay if bitmap actually changed

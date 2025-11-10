@@ -2,21 +2,24 @@ import { ChevronLeft, ChevronDown, ChevronRight, Search } from "lucide-react";
 import { observer } from "mobx-react-lite";
 import type React from "react";
 import { useState } from "react";
-import type { PdfReaderStore, TocNode } from "../stores/PdfReaderStore";
+import type { TocNode, PdfTocStore } from "@epubdown/pdf-render";
 
 interface PdfTableOfContentsProps {
-  store: PdfReaderStore;
+  tocStore: PdfTocStore;
+  onPageSelect: (pageNumber: number) => void;
+  onClose: () => void;
 }
 
 interface TocTreeNodeProps {
   node: TocNode;
-  store: PdfReaderStore;
+  tocStore: PdfTocStore;
+  onPageSelect: (pageNumber: number) => void;
   activeNodeId: string | null;
   expanded: Set<string>;
 }
 
 const TocTreeNode: React.FC<TocTreeNodeProps> = observer(
-  ({ node, store, activeNodeId, expanded }) => {
+  ({ node, tocStore, onPageSelect, activeNodeId, expanded }) => {
     const hasChildren = node.children.length > 0;
     const isExpanded = expanded.has(node.id);
     const isActive = node.id === activeNodeId;
@@ -24,12 +27,12 @@ const TocTreeNode: React.FC<TocTreeNodeProps> = observer(
     const handleToggle = (e: React.MouseEvent) => {
       e.stopPropagation();
       if (hasChildren) {
-        store.toggleNode(node.id);
+        tocStore.toggleNode(node.id);
       }
     };
 
     const handleItemClick = () => {
-      store.handleTocPageSelect(node.pageNumber);
+      onPageSelect(node.pageNumber);
     };
 
     return (
@@ -78,7 +81,8 @@ const TocTreeNode: React.FC<TocTreeNodeProps> = observer(
               <TocTreeNode
                 key={child.id}
                 node={child}
-                store={store}
+                tocStore={tocStore}
+                onPageSelect={onPageSelect}
                 activeNodeId={activeNodeId}
                 expanded={expanded}
               />
@@ -91,23 +95,23 @@ const TocTreeNode: React.FC<TocTreeNodeProps> = observer(
 );
 
 export const PdfTableOfContents: React.FC<PdfTableOfContentsProps> = observer(
-  ({ store }) => {
+  ({ tocStore, onPageSelect, onClose }) => {
     const [searchQuery, setSearchQuery] = useState("");
-    const tocTree = store.tocTree;
-    const activeNodeId = store.activeItemId;
-    const expanded = store.expanded;
+    const tocTree = tocStore.tree;
+    const activeNodeId = tocStore.activeItemId;
+    const expanded = tocStore.expanded;
 
     const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
       const query = e.target.value;
       setSearchQuery(query);
-      store.filterToC(query);
+      tocStore.setFilter(query);
     };
 
     const handleExpandToActive = () => {
-      store.expandToActive();
+      tocStore.expandToActive();
     };
 
-    if (store.tocItems.length === 0) {
+    if (tocStore.items.length === 0) {
       return (
         <div className="p-4 text-gray-500">No table of contents available</div>
       );
@@ -126,7 +130,7 @@ export const PdfTableOfContents: React.FC<PdfTableOfContentsProps> = observer(
           </button>
           <button
             type="button"
-            onClick={() => store.setSidebarOpen(false)}
+            onClick={onClose}
             className="lg:hidden p-1 hover:bg-gray-100 rounded transition-colors"
             aria-label="Close table of contents"
           >
@@ -153,7 +157,8 @@ export const PdfTableOfContents: React.FC<PdfTableOfContentsProps> = observer(
               <TocTreeNode
                 key={node.id}
                 node={node}
-                store={store}
+                tocStore={tocStore}
+                onPageSelect={onPageSelect}
                 activeNodeId={activeNodeId}
                 expanded={expanded}
               />

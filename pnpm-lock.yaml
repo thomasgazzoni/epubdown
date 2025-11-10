@@ -11,7 +11,7 @@ catalogs:
       version: 1.9.4
     '@types/bun':
       specifier: latest
-      version: 1.3.0
+      version: 1.3.1
     '@types/node':
       specifier: ^22.10.2
       version: 22.18.9
@@ -61,7 +61,7 @@ importers:
         version: 3.10.1
       turndown:
         specifier: github:hayeah/turndown#xml
-        version: https://codeload.github.com/hayeah/turndown/tar.gz/1f3c414c6004fb64fe6eadb9fd4b47785766b849
+        version: git+https://git@github.com:hayeah/turndown.git#1f3c414c6004fb64fe6eadb9fd4b47785766b849
       yargs:
         specifier: ^17
         version: 17.7.2
@@ -83,7 +83,7 @@ importers:
         version: 5.9.3
       vite-plugin-node-polyfills:
         specifier: 'catalog:'
-        version: 0.23.0(rollup@4.52.4)(vite@5.4.21(@types/node@24.7.1)(lightningcss@1.30.1))
+        version: 0.23.0(rollup@4.52.4)(vite@6.3.6(@types/node@24.7.1)(jiti@2.6.1)(lightningcss@1.30.1))
       vitest:
         specifier: 'catalog:'
         version: 3.2.4(@types/debug@4.1.12)(@types/node@24.7.1)(@vitest/browser@3.2.4)(jsdom@25.0.1)(lightningcss@1.30.1)(msw@2.11.6(@types/node@24.7.1)(typescript@5.9.3))
@@ -93,6 +93,9 @@ importers:
       '@embedpdf/pdfium':
         specifier: ^1.3.16
         version: 1.4.1
+      mobx:
+        specifier: ^6
+        version: 6.15.0
       pdfjs-dist:
         specifier: ^4.8.69
         version: 4.10.38
@@ -208,7 +211,7 @@ importers:
         version: 16.3.0(@testing-library/dom@10.4.1)(@types/react-dom@19.2.1(@types/react@19.2.2))(@types/react@19.2.2)(react-dom@19.2.0(react@19.2.0))(react@19.2.0)
       '@types/bun':
         specifier: 'catalog:'
-        version: 1.3.0(@types/react@19.2.2)
+        version: 1.3.1(@types/react@19.2.2)
       '@types/lodash':
         specifier: ^4.17.20
         version: 4.17.20
@@ -244,7 +247,7 @@ importers:
         version: 6.0.4(rollup@4.52.4)
       tswire:
         specifier: https://github.com/hayeah/tswire
-        version: https://codeload.github.com/hayeah/tswire/tar.gz/a075a4960b967f63cb43a09284a355466e050e8b(typescript@5.9.3)
+        version: git+https://git@github.com:hayeah/tswire.git#a075a4960b967f63cb43a09284a355466e050e8b(typescript@5.9.3)
       typescript:
         specifier: 'catalog:'
         version: 5.9.3
@@ -262,7 +265,7 @@ importers:
     dependencies:
       wa-sqlite:
         specifier: https://github.com/rhashimoto/wa-sqlite#a883e224392667d45d2a0c42e2c0dcc1f6abcf29
-        version: https://codeload.github.com/rhashimoto/wa-sqlite/tar.gz/a883e224392667d45d2a0c42e2c0dcc1f6abcf29
+        version: git+https://git@github.com:rhashimoto/wa-sqlite.git#a883e224392667d45d2a0c42e2c0dcc1f6abcf29
     devDependencies:
       '@biomejs/biome':
         specifier: 'catalog:'
@@ -1164,8 +1167,8 @@ packages:
   '@types/babel__traverse@7.28.0':
     resolution: {integrity: sha512-8PvcXf70gTDZBgt9ptxJ8elBeBjcLOAcOtoO/mPJjtji1+CdGbHgm77om1GrsPxsiE+uXIpNSK64UYaIwQXd4Q==}
 
-  '@types/bun@1.3.0':
-    resolution: {integrity: sha512-+lAGCYjXjip2qY375xX/scJeVRmZ5cY0wyHYyCYxNcdEXrQ4AOe3gACgd4iQ8ksOslJtW4VNxBJ8llUwc3a6AA==}
+  '@types/bun@1.3.1':
+    resolution: {integrity: sha512-4jNMk2/K9YJtfqwoAa28c8wK+T7nvJFOjxI4h/7sORWcypRNxBpr+TPNaCfVWq70tLCJsqoFwcf0oI0JU/fvMQ==}
 
   '@types/chai@5.2.2':
     resolution: {integrity: sha512-8kB30R7Hwqf40JPiKhVzodJs2Qc1ZJ5zuT3uzw5Hq/dhNCl3G3l83jfpdI1e20BP348+fV7VIL/+FxaXkqBmWg==}
@@ -1394,8 +1397,8 @@ packages:
   builtin-status-codes@3.0.0:
     resolution: {integrity: sha512-HpGFw18DgFWlncDfjTa2rcQ4W88O1mC8e8yZ2AvQY5KDaktSTwo+KRf6nHK6FRI5FyRyb/5T6+TSxfP7QyGsmQ==}
 
-  bun-types@1.3.0:
-    resolution: {integrity: sha512-u8X0thhx+yJ0KmkxuEo9HAtdfgCBaM/aI9K90VQcQioAmkVp3SG3FkwWGibUFz3WdXAdcsqOcbU40lK7tbHdkQ==}
+  bun-types@1.3.1:
+    resolution: {integrity: sha512-NMrcy7smratanWJ2mMXdpatalovtxVggkj11bScuWuiOoXTiKIu2eVS1/7qbyI/4yHedtsn175n4Sm4JcdHLXw==}
     peerDependencies:
       '@types/react': ^19
 
@@ -2749,8 +2752,8 @@ packages:
   tslib@2.8.1:
     resolution: {integrity: sha512-oJFu94HQb+KVduSUQL7wnpmqnfmLsOA/nAh6b6EH0wCEoK0/mPeXU6c3wKDV83MkOuHPRHtSXKKU99IBazS/2w==}
 
-  tswire@https://codeload.github.com/hayeah/tswire/tar.gz/a075a4960b967f63cb43a09284a355466e050e8b:
-    resolution: {tarball: https://codeload.github.com/hayeah/tswire/tar.gz/a075a4960b967f63cb43a09284a355466e050e8b}
+  tswire@git+https://git@github.com:hayeah/tswire.git#a075a4960b967f63cb43a09284a355466e050e8b:
+    resolution: {commit: a075a4960b967f63cb43a09284a355466e050e8b, repo: git@github.com:hayeah/tswire.git, type: git}
     version: 0.0.3
     hasBin: true
     peerDependencies:
@@ -2759,8 +2762,8 @@ packages:
   tty-browserify@0.0.1:
     resolution: {integrity: sha512-C3TaO7K81YvjCgQH9Q1S3R3P3BtN3RIM8n+OvX4il1K1zgE8ZhI0op7kClgkxtutIE8hQrcrHBXvIheqKUUCxw==}
 
-  turndown@https://codeload.github.com/hayeah/turndown/tar.gz/1f3c414c6004fb64fe6eadb9fd4b47785766b849:
-    resolution: {tarball: https://codeload.github.com/hayeah/turndown/tar.gz/1f3c414c6004fb64fe6eadb9fd4b47785766b849}
+  turndown@git+https://git@github.com:hayeah/turndown.git#1f3c414c6004fb64fe6eadb9fd4b47785766b849:
+    resolution: {commit: 1f3c414c6004fb64fe6eadb9fd4b47785766b849, repo: git@github.com:hayeah/turndown.git, type: git}
     version: 7.2.0
 
   type-fest@4.41.0:
@@ -2946,8 +2949,8 @@ packages:
     resolution: {integrity: sha512-o8qghlI8NZHU1lLPrpi2+Uq7abh4GGPpYANlalzWxyWteJOCsr/P+oPBA49TOLu5FTZO4d3F9MnWJfiMo4BkmA==}
     engines: {node: '>=18'}
 
-  wa-sqlite@https://codeload.github.com/rhashimoto/wa-sqlite/tar.gz/a883e224392667d45d2a0c42e2c0dcc1f6abcf29:
-    resolution: {tarball: https://codeload.github.com/rhashimoto/wa-sqlite/tar.gz/a883e224392667d45d2a0c42e2c0dcc1f6abcf29}
+  wa-sqlite@git+https://git@github.com:rhashimoto/wa-sqlite.git#a883e224392667d45d2a0c42e2c0dcc1f6abcf29:
+    resolution: {commit: a883e224392667d45d2a0c42e2c0dcc1f6abcf29, repo: git@github.com:rhashimoto/wa-sqlite.git, type: git}
     version: 1.0.7
 
   webidl-conversions@7.0.0:
@@ -3741,9 +3744,9 @@ snapshots:
     dependencies:
       '@babel/types': 7.28.4
 
-  '@types/bun@1.3.0(@types/react@19.2.2)':
+  '@types/bun@1.3.1(@types/react@19.2.2)':
     dependencies:
-      bun-types: 1.3.0(@types/react@19.2.2)
+      bun-types: 1.3.1(@types/react@19.2.2)
     transitivePeerDependencies:
       - '@types/react'
 
@@ -3842,26 +3845,6 @@ snapshots:
       sirv: 3.0.2
       tinyrainbow: 2.0.0
       vitest: 3.2.4(@types/debug@4.1.12)(@types/node@22.18.9)(@vitest/browser@3.2.4)(jsdom@25.0.1)(lightningcss@1.30.1)(msw@2.11.6(@types/node@22.18.9)(typescript@5.9.3))
-      ws: 8.18.3
-    optionalDependencies:
-      playwright: 1.56.1
-    transitivePeerDependencies:
-      - bufferutil
-      - msw
-      - utf-8-validate
-      - vite
-    optional: true
-
-  '@vitest/browser@3.2.4(msw@2.11.6(@types/node@24.7.1)(typescript@5.9.3))(playwright@1.56.1)(vite@5.4.21(@types/node@24.7.1)(lightningcss@1.30.1))(vitest@3.2.4)':
-    dependencies:
-      '@testing-library/dom': 10.4.1
-      '@testing-library/user-event': 14.6.1(@testing-library/dom@10.4.1)
-      '@vitest/mocker': 3.2.4(msw@2.11.6(@types/node@24.7.1)(typescript@5.9.3))(vite@5.4.21(@types/node@24.7.1)(lightningcss@1.30.1))
-      '@vitest/utils': 3.2.4
-      magic-string: 0.30.19
-      sirv: 3.0.2
-      tinyrainbow: 2.0.0
-      vitest: 3.2.4(@types/debug@4.1.12)(@types/node@24.7.1)(@vitest/browser@3.2.4)(jsdom@25.0.1)(lightningcss@1.30.1)(msw@2.11.6(@types/node@24.7.1)(typescript@5.9.3))
       ws: 8.18.3
     optionalDependencies:
       playwright: 1.56.1
@@ -4083,7 +4066,7 @@ snapshots:
 
   builtin-status-codes@3.0.0: {}
 
-  bun-types@1.3.0(@types/react@19.2.2):
+  bun-types@1.3.1(@types/react@19.2.2):
     dependencies:
       '@types/node': 24.7.1
       '@types/react': 19.2.2
@@ -5824,14 +5807,14 @@ snapshots:
 
   tslib@2.8.1: {}
 
-  tswire@https://codeload.github.com/hayeah/tswire/tar.gz/a075a4960b967f63cb43a09284a355466e050e8b(typescript@5.9.3):
+  tswire@git+https://git@github.com:hayeah/tswire.git#a075a4960b967f63cb43a09284a355466e050e8b(typescript@5.9.3):
     dependencies:
       commander: 12.1.0
       typescript: 5.9.3
 
   tty-browserify@0.0.1: {}
 
-  turndown@https://codeload.github.com/hayeah/turndown/tar.gz/1f3c414c6004fb64fe6eadb9fd4b47785766b849:
+  turndown@git+https://git@github.com:hayeah/turndown.git#1f3c414c6004fb64fe6eadb9fd4b47785766b849:
     dependencies:
       '@mixmark-io/domino': 2.2.0
 
@@ -5957,19 +5940,19 @@ snapshots:
       - supports-color
       - terser
 
-  vite-plugin-node-polyfills@0.23.0(rollup@4.52.4)(vite@5.4.21(@types/node@24.7.1)(lightningcss@1.30.1)):
-    dependencies:
-      '@rollup/plugin-inject': 5.0.5(rollup@4.52.4)
-      node-stdlib-browser: 1.3.1
-      vite: 5.4.21(@types/node@24.7.1)(lightningcss@1.30.1)
-    transitivePeerDependencies:
-      - rollup
-
   vite-plugin-node-polyfills@0.23.0(rollup@4.52.4)(vite@6.3.6(@types/node@22.18.9)(jiti@2.6.1)(lightningcss@1.30.1)):
     dependencies:
       '@rollup/plugin-inject': 5.0.5(rollup@4.52.4)
       node-stdlib-browser: 1.3.1
       vite: 6.3.6(@types/node@22.18.9)(jiti@2.6.1)(lightningcss@1.30.1)
+    transitivePeerDependencies:
+      - rollup
+
+  vite-plugin-node-polyfills@0.23.0(rollup@4.52.4)(vite@6.3.6(@types/node@24.7.1)(jiti@2.6.1)(lightningcss@1.30.1)):
+    dependencies:
+      '@rollup/plugin-inject': 5.0.5(rollup@4.52.4)
+      node-stdlib-browser: 1.3.1
+      vite: 6.3.6(@types/node@24.7.1)(jiti@2.6.1)(lightningcss@1.30.1)
     transitivePeerDependencies:
       - rollup
 
@@ -6090,7 +6073,7 @@ snapshots:
     optionalDependencies:
       '@types/debug': 4.1.12
       '@types/node': 24.7.1
-      '@vitest/browser': 3.2.4(msw@2.11.6(@types/node@24.7.1)(typescript@5.9.3))(playwright@1.56.1)(vite@5.4.21(@types/node@24.7.1)(lightningcss@1.30.1))(vitest@3.2.4)
+      '@vitest/browser': 3.2.4(msw@2.11.6(@types/node@24.7.1)(typescript@5.9.3))(playwright@1.56.1)(vite@6.3.6(@types/node@24.7.1)(jiti@2.6.1)(lightningcss@1.30.1))(vitest@3.2.4)
       jsdom: 25.0.1
     transitivePeerDependencies:
       - less
@@ -6109,7 +6092,7 @@ snapshots:
     dependencies:
       xml-name-validator: 5.0.0
 
-  wa-sqlite@https://codeload.github.com/rhashimoto/wa-sqlite/tar.gz/a883e224392667d45d2a0c42e2c0dcc1f6abcf29: {}
+  wa-sqlite@git+https://git@github.com:rhashimoto/wa-sqlite.git#a883e224392667d45d2a0c42e2c0dcc1f6abcf29: {}
 
   webidl-conversions@7.0.0: {}
 

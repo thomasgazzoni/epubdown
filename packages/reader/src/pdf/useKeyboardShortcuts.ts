@@ -6,7 +6,6 @@ interface UseKeyboardShortcutsOptions {
   store: PdfReaderStore;
   containerRef: RefObject<HTMLDivElement | null>;
   calculateCurrentPosition: () => number;
-  maxPpi: number;
   onNavigateToPage: (page: number) => void;
 }
 
@@ -29,7 +28,6 @@ export function useKeyboardShortcuts({
   store,
   containerRef,
   calculateCurrentPosition,
-  maxPpi,
   onNavigateToPage,
 }: UseKeyboardShortcutsOptions) {
   useEffect(() => {
@@ -49,7 +47,11 @@ export function useKeyboardShortcuts({
         case "=": {
           // Zoom in
           e.preventDefault();
+          if (!containerRef.current) return;
           const position = calculateCurrentPosition();
+          const containerWidth = containerRef.current.clientWidth;
+          const dpr = window.devicePixelRatio || 1;
+          const maxPpi = store.getMaxPpi(containerWidth, dpr);
           store.zoomIn(position, ZOOM_PPI_LEVELS, maxPpi);
           break;
         }
@@ -111,5 +113,5 @@ export function useKeyboardShortcuts({
     return () => {
       container.removeEventListener("keydown", handleKeyDown);
     };
-  }, [store, containerRef, calculateCurrentPosition, maxPpi, onNavigateToPage]);
+  }, [store, containerRef, calculateCurrentPosition, onNavigateToPage]);
 }

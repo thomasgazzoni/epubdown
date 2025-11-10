@@ -23,6 +23,7 @@
   },
   "dependencies": {
     "@embedpdf/pdfium": "^1.3.16",
+    "mobx": "^6",
     "pdfjs-dist": "^4.8.69"
   },
   "devDependencies": {

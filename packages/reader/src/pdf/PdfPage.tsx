@@ -32,6 +32,8 @@ export const PdfPage = observer(() => {
 
   useEffect(() => {
     if (match && params?.bookId) {
+      // Parse URL params before loading to set up restoration state
+      store.parseUrlParams();
       void store.load(Number(params.bookId));
     }
   }, [match, params?.bookId, store]);
@@ -65,7 +67,11 @@ export const PdfPage = observer(() => {
         {/* Sticky anchor for sidebar positioning */}
         <div className="sticky top-0 h-0 relative z-50">
           <PdfSidebar store={store}>
-            <PdfTableOfContents store={store} />
+            <PdfTableOfContents
+              tocStore={store.tocStore}
+              onPageSelect={(pageNum) => store.handleTocPageSelect(pageNum)}
+              onClose={() => store.setSidebarOpen(false)}
+            />
           </PdfSidebar>
         </div>
 

@@ -135,6 +135,9 @@ export class PdfReaderStore {
   private debug = false;
   // Performance tracking
   private renderCallCount = 0;
+  // Average full render duration tracking (rolling window)
+  private renderDurations: number[] = [];
+  private readonly MAX_RENDER_SAMPLES = 10;
   // Generation token for canceling stale tasks
   private taskGen = 0;
   // Scroll velocity tracking for adaptive quality
@@ -262,22 +265,78 @@ export class PdfReaderStore {
   }
 
   /**
+   * Track render duration for adaptive thumbnail logic
+   */
+  private recordRenderDuration(durationMs: number) {
+    this.renderDurations.push(durationMs);
+    if (this.renderDurations.length > this.MAX_RENDER_SAMPLES) {
+      this.renderDurations.shift();
+    }
+  }
+
+  /**
+   * Get average full render duration
+   */
+  private getAvgFullRenderMs(): number {
+    if (this.renderDurations.length === 0) return 0;
+    const sum = this.renderDurations.reduce((a, b) => a + b, 0);
+    return sum / this.renderDurations.length;
+  }
+
+  /**
+   * Check if we should skip thumbnail rendering
+   * Skip if full renders are fast enough (<=180ms average)
+   */
+  private shouldSkipThumb(): boolean {
+    const avgMs = this.getAvgFullRenderMs();
+    return avgMs > 0 && avgMs <= 180;
+  }
+
+  /**
+   * Check if thumb meets minimum quality threshold
+   * Only render thumb if backing pixels >= 0.5 × final device pixels
+   */
+  private isThumbQualitySufficient(pageNum: number, thumbPpi: number): boolean {
+    const pageData = this.docState.getPageData(pageNum);
+    if (!pageData?.wPt || !pageData?.hPt) return false;
+
+    const effectivePpi = this.ppi * this.devicePixelRatio;
+    const MIN_SCALE = 0.5;
+    return thumbPpi >= effectivePpi * MIN_SCALE;
+  }
+
+  /**
    * Get effective PPI for rendering based on scroll mode
    * @param pageNum Page number to render
    * @param kind "thumb" or "full"
    */
   private getEffectivePpi(pageNum: number, kind: "thumb" | "full"): number {
-    if (kind === "thumb") {
-      return this.THUMB_PPI;
-    }
-
     // Get page dimensions
     const pageData = this.docState.getPageData(pageNum);
     if (!pageData?.wPt || !pageData?.hPt) {
-      return this.ppi; // fallback
+      return kind === "thumb" ? this.THUMB_PPI : this.ppi; // fallback
     }
 
-    // If fast scrolling, use thumb PPI even for "full" requests
+    // For thumb requests, apply adaptive heuristics
+    if (kind === "thumb") {
+      // Skip thumbs if full renders are fast
+      if (this.shouldSkipThumb()) {
+        // Go straight to full quality
+        return this.clampPpiForPage(pageData.wPt, pageData.hPt, this.ppi);
+      }
+
+      // Check if thumb meets minimum quality threshold
+      const effectivePpi = this.ppi * this.devicePixelRatio;
+      const thumbPpi = Math.round(effectivePpi * 0.5); // 50% scale
+      if (!this.isThumbQualitySufficient(pageNum, thumbPpi)) {
+        // Thumb would be too blurry, skip it
+        return this.clampPpiForPage(pageData.wPt, pageData.hPt, this.ppi);
+      }
+
+      return Math.max(72, thumbPpi); // Guard very small
+    }
+
+    // For full requests: If fast scrolling, use thumb PPI
     if (this.isFastScrolling()) {
       return this.THUMB_PPI;
     }
@@ -628,7 +687,7 @@ export class PdfReaderStore {
   private async loadPageSizes(): Promise<void> {
     if (!this.currentBookId || this.pageCount === 0) return;
 
-    let maxPageWidth = 0;
+    const maxPageWidth = 0;
 
     // Try to load from cache
     const cachedSizes = await this.pageSizeCache.getPageSizes(
@@ -762,6 +821,12 @@ export class PdfReaderStore {
       }
       this.bitmaps.set(pageNum, bitmap);
       this.docState.setPageHasFull(pageNum, true);
+
+      // Record render duration for full renders (for adaptive thumbnail logic)
+      const pageData = this.docState.getPageData(pageNum);
+      if (pageData?.renderDurationMs) {
+        this.recordRenderDuration(pageData.renderDurationMs);
+      }
     }
 
     this.docState.setPageRendered(pageNum);
@@ -1676,6 +1741,28 @@ export class PdfReaderStore {
     this.engine = null;
     this.queue = null;
     this.scheduler = null;
+
+    // Clean up bitmaps - close all to free GPU memory promptly
+    for (const bitmap of this.bitmaps.values()) {
+      bitmap.close();
+    }
+    this.bitmaps.clear();
+
+    for (const thumb of this.thumbs.values()) {
+      thumb.close();
+    }
+    this.thumbs.clear();
+
+    // Clean up canvases
+    for (const canvas of this.canvases.values()) {
+      canvas.width = 0;
+      canvas.height = 0;
+    }
+    this.canvases.clear();
+
+    // Reset memory tracking
+    this.memoryBytes = 0;
+    this.bitmapBytes = 0;
 
     // Clean up Worker if active
     if (this.workerManager) {

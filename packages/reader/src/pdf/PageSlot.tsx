@@ -1,18 +1,8 @@
 import { observer } from "mobx-react-lite";
-import React, { useEffect, useRef, useState, memo } from "react";
+import type React from "react";
+import { useEffect, useRef, useState, memo } from "react";
 import type { PageData } from "@epubdown/pdf-render";
 import type { PdfReaderStore } from "../stores/PdfReaderStore";
-
-/**
- * Feature flag for bitmap rendering approach
- * When true, uses 2D context drawImage for bitmap rendering with caching support
- * When false, uses 2D context drawImage (same behavior currently)
- *
- * NOTE: We always use drawImage instead of transferFromImageBitmap because
- * transferFromImageBitmap detaches the bitmap, making it unusable for caching.
- * This flag is kept for potential future optimization experiments.
- */
-const USE_BITMAP_RENDERER = true;
 
 /**
  * Canvas/Bitmap display component with efficient rendering
@@ -86,28 +76,33 @@ const CanvasHost: React.FC<{
 
       const bmCanvas = bitmapCanvasRef.current;
 
-      // Only update canvas content when bitmap actually changes
-      // This prevents trying to transfer an already-detached bitmap
-      if (bitmapChanged) {
-        // Set canvas dimensions to container size (not bitmap native size)
-        // This ensures thumbnails scale up to fill the space, preventing visual jumps
-        if (bmCanvas.width !== width || bmCanvas.height !== height) {
-          bmCanvas.width = width;
-          bmCanvas.height = height;
-        }
+      // Get device pixel ratio for HiDPI rendering
+      const dpr = window.devicePixelRatio || 1;
 
-        // Use 2D context to draw bitmap scaled to container
+      // Always size the *backing store* to device pixels,
+      // and the *CSS size* to layout pixels for crisp rendering
+      const targetW = Math.max(1, Math.round(width * dpr));
+      const targetH = Math.max(1, Math.round(height * dpr));
+
+      if (bmCanvas.width !== targetW || bmCanvas.height !== targetH) {
+        bmCanvas.width = targetW;
+        bmCanvas.height = targetH;
+        bmCanvas.style.width = `${width}px`;
+        bmCanvas.style.height = `${height}px`;
+      }
+
+      // Update canvas content when bitmap changes or size changes
+      const ctx2d = bmCanvas.getContext("2d");
+      if (ctx2d && bitmapChanged) {
+        ctx2d.imageSmoothingEnabled = true; // default; keep text crisp
+        ctx2d.clearRect(0, 0, targetW, targetH);
+        // Draw bitmap scaled to device pixels for crisp rendering
         // Note: We use drawImage instead of transferFromImageBitmap because
         // transferFromImageBitmap detaches the bitmap, making it unusable for
         // caching. When navigating back and forth, components may unmount/remount
         // and try to reuse already-detached bitmaps from cache. drawImage copies
         // the pixel data, leaving the cached bitmap intact for reuse.
-        const ctx2d = bmCanvas.getContext("2d");
-        if (ctx2d) {
-          ctx2d.clearRect(0, 0, width, height);
-          // Scale bitmap to fill container dimensions
-          ctx2d.drawImage(bitmap, 0, 0, width, height);
-        }
+        ctx2d.drawImage(bitmap, 0, 0, targetW, targetH);
       }
 
       // Only show loading overlay if bitmap actually changed
@@ -166,7 +161,7 @@ const CanvasHost: React.FC<{
     setIsContentReady(true); // Placeholder is immediately ready
     mount(placeholderRef.current);
     currentCanvasRef.current = null;
-  }, [bitmap, canvas]);
+  }, [bitmap, canvas, width, height]);
 
   return (
     <div

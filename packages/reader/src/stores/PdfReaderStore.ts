@@ -445,9 +445,15 @@ export class PdfReaderStore {
             console.error("[PdfReaderStore] Worker fatal error:", err);
           });
         });
+
+        // Create a copy of the data for the worker (will be transferred via zero-copy)
+        // Keep the original for TOC loading and engine switching
+        // This one-time copy cost is acceptable vs. cloning on every postMessage
+        const workerData = new Uint8Array(data);
+
         const pageCount = await this.workerManager.init({
           engine: kind,
-          pdfData: data,
+          pdfData: workerData,
           wasmUrl: kind === "PDFium" ? DEFAULT_PDFIUM_WASM_URL : undefined,
         });
 

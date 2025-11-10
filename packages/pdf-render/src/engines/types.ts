@@ -17,7 +17,10 @@ export interface OutlineItem {
 }
 
 export interface PageHandle {
-  renderToCanvas(canvas: HTMLCanvasElement, ppi: number): Promise<void>;
+  renderToCanvas(
+    canvas: HTMLCanvasElement | OffscreenCanvas,
+    ppi: number,
+  ): Promise<void>;
   destroy(): void;
 }
 

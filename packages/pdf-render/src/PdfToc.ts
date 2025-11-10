@@ -1,4 +1,4 @@
-import { makeAutoObservable, runInAction } from "mobx";
+import { makeAutoObservable, runInAction, computed } from "mobx";
 import type { DocumentHandle, OutlineItem } from "./engines";
 
 /**
@@ -36,7 +36,14 @@ export class PdfTocStore {
   loaded = false;
 
   constructor() {
-    makeAutoObservable(this, {}, { autoBind: true });
+    makeAutoObservable(
+      this,
+      {
+        tree: computed,
+        activeNode: computed,
+      },
+      { autoBind: true },
+    );
   }
 
   /**
@@ -73,10 +80,14 @@ export class PdfTocStore {
   }
 
   /**
-   * Generate a stable ID for a ToC node based on its position and content
+   * Generate a stable ID for a ToC node based on its content
+   * Uses level, pageNumber, and title hash for stability across reloads
+   * Avoids using index to prevent ID churn when outline is regenerated
    */
-  private generateNodeId(item: OutlineItem, index: number): string {
-    return `${item.level}/${item.pageNumber}/${index}/${item.title.slice(0, 64)}`;
+  private generateNodeId(item: OutlineItem): string {
+    // Simple hash: sanitized portion of title for uniqueness
+    const titleHash = item.title.slice(0, 64).replace(/[^a-zA-Z0-9]/g, "_");
+    return `${item.level}/${item.pageNumber}/${titleHash}`;
   }
 
   /**
@@ -107,7 +118,7 @@ export class PdfTocStore {
       if (!item) continue;
 
       const node: TocNode = {
-        id: this.generateNodeId(item, i),
+        id: this.generateNodeId(item),
         title: item.title,
         pageNumber: item.pageNumber,
         level: item.level,
@@ -203,7 +214,8 @@ export class PdfTocStore {
   selectNearestNodeForPage(page: number): TocNode | null {
     if (this.outline.length === 0) return null;
 
-    // Find the last node whose page number is <= the target page
+    // Find the item with the greatest pageNumber <= page
+    // Don't assume outline is sorted - scan all items
     let nearestItem: OutlineItem | null = null;
     let nearestIndex = -1;
 
@@ -211,18 +223,19 @@ export class PdfTocStore {
       const item = this.outline[i];
       if (!item) continue;
 
-      if (item.pageNumber <= page) {
+      if (
+        item.pageNumber <= page &&
+        (!nearestItem || item.pageNumber >= nearestItem.pageNumber)
+      ) {
         nearestItem = item;
         nearestIndex = i;
-      } else {
-        break;
       }
     }
 
     if (!nearestItem || nearestIndex === -1) return null;
 
     // Generate the ID and find the node in the tree
-    const id = this.generateNodeId(nearestItem, nearestIndex);
+    const id = this.generateNodeId(nearestItem);
     const findNode = (nodes: TocNode[]): TocNode | null => {
       for (const node of nodes) {
         if (node.id === id) return node;
@@ -241,17 +254,18 @@ export class PdfTocStore {
   getCurrentTocItem(page: number): OutlineItem | null {
     if (this.outline.length === 0) return null;
 
-    // Find the TOC item for the current page
-    // Use the last TOC item whose page number is <= current page
-    let currentItem: OutlineItem | null = null;
+    // Find the item with the greatest pageNumber <= page
+    // Don't assume outline is sorted - scan all items
+    let current: OutlineItem | null = null;
     for (const item of this.outline) {
-      if (item.pageNumber <= page) {
-        currentItem = item;
-      } else {
-        break;
+      if (
+        item.pageNumber <= page &&
+        (!current || item.pageNumber >= current.pageNumber)
+      ) {
+        current = item;
       }
     }
-    return currentItem;
+    return current;
   }
 
   /**
@@ -282,6 +296,10 @@ export class PdfTocStore {
   expandToActive(): void {
     if (!this.activeItemId) return;
 
+    // Build from the full outline when computing parents
+    // to avoid issues when a filter is active
+    const fullTree = this.buildTree(this.outline);
+
     // Find all parent IDs by walking up the tree
     const parentIds: string[] = [];
     const findParents = (nodes: TocNode[], targetId: string): boolean => {
@@ -297,7 +315,7 @@ export class PdfTocStore {
       return false;
     };
 
-    findParents(this.tree, this.activeItemId);
+    findParents(fullTree, this.activeItemId);
 
     // Expand all parent nodes
     for (const id of parentIds) {

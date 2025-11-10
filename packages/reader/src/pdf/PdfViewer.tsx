@@ -55,18 +55,13 @@ const ZoomControlsObserver: FC<{
     const slot = slots[pageNum - 1] as HTMLElement | undefined;
     if (!slot) return 0;
 
-    const containerRect = container.getBoundingClientRect();
-    const slotRect = slot.getBoundingClientRect();
-
-    // Calculate offset within page
-    const pageTopOffset = slotRect.top - containerRect.top;
-    const offsetWithinPage = -pageTopOffset;
-    const slotHeight = slotRect.height;
+    // Use offsetTop to avoid layout thrashing from getBoundingClientRect
+    const top = slot.offsetTop - container.scrollTop;
+    const offset = -top;
+    const h = slot.offsetHeight || 1;
 
     // Return as ratio, clamped to [0, 1]
-    return slotHeight > 0
-      ? Math.max(0, Math.min(1, offsetWithinPage / slotHeight))
-      : 0;
+    return Math.max(0, Math.min(1, offset / h));
   }, [store, containerRef]);
 
   // Calculate the fit-to-width PPI as max zoom
@@ -228,21 +223,17 @@ export const PdfViewer = observer(({ store }: PdfViewerProps) => {
     if (!containerRef.current) return 0;
 
     const pageNum = store.currentPage;
+    const container = containerRef.current;
     const slot = slotRefs.current[pageNum - 1]; // Convert to 0-based index for array
     if (!slot) return 0;
 
-    const containerRect = containerRef.current.getBoundingClientRect();
-    const slotRect = slot.getBoundingClientRect();
-
-    // Calculate offset within page
-    const pageTopOffset = slotRect.top - containerRect.top;
-    const offsetWithinPage = -pageTopOffset;
-    const slotHeight = slotRect.height;
+    // Use offsetTop to avoid layout thrashing from getBoundingClientRect
+    const top = slot.offsetTop - container.scrollTop;
+    const offset = -top;
+    const h = slot.offsetHeight || 1;
 
     // Return as ratio, clamped to [0, 1]
-    return slotHeight > 0
-      ? Math.max(0, Math.min(1, offsetWithinPage / slotHeight))
-      : 0;
+    return Math.max(0, Math.min(1, offset / h));
   }, [store, store.currentPage]);
 
   // Restore scroll position based on page number (1-based) and position percentage
@@ -407,7 +398,8 @@ export const PdfViewer = observer(({ store }: PdfViewerProps) => {
       },
       {
         root: containerRef.current,
-        threshold: [0, 0.1, 0.25, 0.5, 0.75, 1.0], // Precise visibility ratios
+        threshold: [0, 0.5, 1], // Fewer thresholds for less callback overhead
+        rootMargin: "10% 0px", // Prefetch earlier for smoother experience
       },
     );
     currentPageObserverRef.current = observer;

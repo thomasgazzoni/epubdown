@@ -15,7 +15,7 @@ import type {
   BitmapResponse,
 } from "./renderWorker";
 import type { RendererKind } from "./engines/types";
-import { canUseOffscreenPipeline } from "./offscreenCapabilities";
+import { canRenderInWorker } from "./offscreenCapabilities";
 
 export interface RenderTask {
   taskId: string;
@@ -31,6 +31,18 @@ export interface WorkerManagerOptions {
   wasmUrl?: string;
 }
 
+/**
+ * Heartbeat interval (milliseconds)
+ * How often to ping the worker to check if it's alive
+ */
+const HEARTBEAT_INTERVAL_MS = 5000; // 5 seconds
+
+/**
+ * Heartbeat timeout (milliseconds)
+ * If no pong response within this time, worker is considered unresponsive
+ */
+const HEARTBEAT_TIMEOUT_MS = 15000; // 15 seconds
+
 export class RenderWorkerManager {
   private worker: Worker | null = null;
   private tasks = new Map<string, RenderTask>();
@@ -39,15 +51,21 @@ export class RenderWorkerManager {
   private pageCount = 0;
   private initTimeoutId: number | null = null;
 
+  // Heartbeat state
+  private heartbeatIntervalId: number | null = null;
+  private lastHeartbeatResponse: number = 0;
+  private _isWorkerResponsive = true;
+
+  /**
+   * Optional callback to handle fatal worker errors
+   */
+  constructor(private onFatalError?: (err: Error) => void) {}
+
   /**
    * Check if OffscreenCanvas Worker rendering is supported
    */
   static isSupported(): boolean {
-    return (
-      typeof Worker !== "undefined" &&
-      canUseOffscreenPipeline() &&
-      typeof OffscreenCanvas !== "undefined"
-    );
+    return typeof Worker !== "undefined" && canRenderInWorker();
   }
 
   /**
@@ -93,18 +111,21 @@ export class RenderWorkerManager {
 
     this.worker.onerror = (err) => {
       console.error("[WorkerManager] Worker error:", err);
+      const error = new Error("Worker crashed");
       // Fail all pending tasks
       for (const task of this.tasks.values()) {
-        task.onError(new Error("Worker crashed"));
+        task.onError(error);
       }
       this.tasks.clear();
+      // Notify UI of fatal error
+      this.onFatalError?.(error);
     };
 
-    // Send init message
-    const initMsg: WorkerRequest = {
-      type: "init",
+    // Send init message with ArrayBuffer transfer (zero-copy)
+    const initMsg = {
+      type: "init" as const,
       engine: options.engine,
-      pdfData: options.pdfData,
+      pdfData: options.pdfData.buffer, // ArrayBuffer
       wasmUrl: options.wasmUrl,
     };
 
@@ -140,6 +161,8 @@ export class RenderWorkerManager {
           console.log(
             `[WorkerManager] Worker ready with ${msg.pageCount} pages (total init: ${totalTime}ms)`,
           );
+          // Start heartbeat monitoring after successful initialization
+          this.startHeartbeat();
           resolve(msg.pageCount);
         } else if (msg.type === "error") {
           if (this.initTimeoutId !== null) {
@@ -155,7 +178,8 @@ export class RenderWorkerManager {
         }
       };
 
-      this.worker!.postMessage(initMsg);
+      // Transfer the underlying buffer to the worker (zero copy)
+      this.worker!.postMessage(initMsg, [initMsg.pdfData]);
       console.log("[WorkerManager] Init message posted to worker");
     });
   }
@@ -242,13 +266,97 @@ export class RenderWorkerManager {
         }
         break;
       }
+      case "pong": {
+        // Worker responded to heartbeat - update last response time
+        this.lastHeartbeatResponse = performance.now();
+        if (!this._isWorkerResponsive) {
+          console.log("[WorkerManager] Worker is responsive again");
+          this._isWorkerResponsive = true;
+        }
+        break;
+      }
     }
+  }
+
+  /**
+   * Start heartbeat monitoring
+   * Sends periodic pings to worker and checks for responses
+   */
+  private startHeartbeat(): void {
+    if (this.heartbeatIntervalId !== null) {
+      return; // Already started
+    }
+
+    // Initialize last response time to now
+    this.lastHeartbeatResponse = performance.now();
+    this._isWorkerResponsive = true;
+
+    // Send heartbeat and check for timeout
+    const sendHeartbeat = () => {
+      if (!this.worker || !this.isInitialized) {
+        return;
+      }
+
+      // Send heartbeat ping
+      const msg: WorkerRequest = {
+        type: "heartbeat",
+      };
+      this.worker.postMessage(msg);
+
+      // Check if worker is responsive
+      const now = performance.now();
+      const timeSinceLastResponse = now - this.lastHeartbeatResponse;
+
+      if (timeSinceLastResponse > HEARTBEAT_TIMEOUT_MS) {
+        if (this._isWorkerResponsive) {
+          console.warn(
+            `[WorkerManager] Worker unresponsive (no pong for ${(timeSinceLastResponse / 1000).toFixed(1)}s)`,
+          );
+          this._isWorkerResponsive = false;
+        }
+      }
+    };
+
+    // Send initial heartbeat
+    sendHeartbeat();
+
+    // Schedule periodic heartbeats
+    this.heartbeatIntervalId = window.setInterval(
+      sendHeartbeat,
+      HEARTBEAT_INTERVAL_MS,
+    );
+
+    console.log(
+      `[WorkerManager] Heartbeat monitoring started (interval: ${HEARTBEAT_INTERVAL_MS}ms, timeout: ${HEARTBEAT_TIMEOUT_MS}ms)`,
+    );
+  }
+
+  /**
+   * Stop heartbeat monitoring
+   */
+  private stopHeartbeat(): void {
+    if (this.heartbeatIntervalId !== null) {
+      clearInterval(this.heartbeatIntervalId);
+      this.heartbeatIntervalId = null;
+      console.log("[WorkerManager] Heartbeat monitoring stopped");
+    }
+  }
+
+  /**
+   * Check if worker is currently responsive
+   * Returns false if worker hasn't responded to heartbeat within timeout
+   */
+  get isWorkerResponsive(): boolean {
+    return this._isWorkerResponsive;
   }
 
   /**
    * Terminate the worker and clean up
    */
   destroy(): void {
+    // Stop heartbeat monitoring
+    this.stopHeartbeat();
+
     // Cancel pending initialization timeout
     if (this.initTimeoutId !== null) {
       console.log("[WorkerManager] Clearing pending init timeout");

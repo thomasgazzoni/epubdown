@@ -17,8 +17,10 @@ interface UseKeyboardShortcutsOptions {
  * - -/_ : Zoom out
  * - 0   : Reset to 100%
  * - f/F : Fit to width
- * - PageUp   : Previous page
- * - PageDown : Next page
+ * - Home : Jump to first page
+ * - End  : Jump to last page
+ * - PageUp   : Previous page (Shift+PageUp: -10 pages)
+ * - PageDown : Next page (Shift+PageDown: +10 pages)
  *
  * REQUIREMENTS:
  * - Container must be focused (tabindex="0")
@@ -81,19 +83,35 @@ export function useKeyboardShortcuts({
           store.fitToWidth(cssWidth, position, dpr);
           break;
         }
-        case "PageUp": {
-          // Previous page
+        case "Home": {
+          // Jump to first page
           e.preventDefault();
-          const prevPage = Math.max(1, store.currentPage - 1);
+          onNavigateToPage(1);
+          break;
+        }
+        case "End": {
+          // Jump to last page
+          e.preventDefault();
+          onNavigateToPage(store.pageCount);
+          break;
+        }
+        case "PageUp": {
+          // Previous page (Shift+PageUp: -10 pages)
+          e.preventDefault();
+          const prevPage = e.shiftKey
+            ? Math.max(1, store.currentPage - 10)
+            : Math.max(1, store.currentPage - 1);
           if (prevPage !== store.currentPage) {
             onNavigateToPage(prevPage);
           }
           break;
         }
         case "PageDown": {
-          // Next page
+          // Next page (Shift+PageDown: +10 pages)
           e.preventDefault();
-          const nextPage = Math.min(store.pageCount, store.currentPage + 1);
+          const nextPage = e.shiftKey
+            ? Math.min(store.pageCount, store.currentPage + 10)
+            : Math.min(store.pageCount, store.currentPage + 1);
           if (nextPage !== store.currentPage) {
             onNavigateToPage(nextPage);
           }

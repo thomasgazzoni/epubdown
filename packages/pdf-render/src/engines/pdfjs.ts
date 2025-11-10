@@ -107,7 +107,11 @@ export function createPdfjsEngine(): PDFEngine {
               canvas.height = Math.max(1, Math.floor(viewport.height));
               const ctx = canvas.getContext("2d");
               if (!ctx) throw new Error("Canvas 2D context unavailable");
-              await page.render({ canvasContext: ctx, viewport }).promise;
+              // Cast to CanvasRenderingContext2D - both HTMLCanvas and OffscreenCanvas contexts are compatible
+              await page.render({
+                canvasContext: ctx as CanvasRenderingContext2D,
+                viewport,
+              }).promise;
             },
             destroy() {
               page.cleanup();

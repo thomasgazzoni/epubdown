@@ -21,7 +21,6 @@ import {
   canUseOffscreenPipeline,
   logOffscreenCapabilities,
 } from "@epubdown/pdf-render";
-import { DEFAULT_PAGE_PT } from "../pdf/pdfConstants";
 import type { PdfPageSizeCache } from "../lib/PdfPageSizeCache";
 
 export type { PageStatus, PageData, TocNode };
@@ -138,6 +137,13 @@ export class PdfReaderStore {
   private renderCallCount = 0;
   // Generation token for canceling stale tasks
   private taskGen = 0;
+  // Scroll velocity tracking for adaptive quality
+  private lastScrollTime = 0;
+  private lastScrollPage = 1;
+  private scrollVelocity = 0; // pages per second
+  private scrollVelocityTimer: number | null = null;
+  // Budget eviction debounce
+  private budgetEvictionTimer: number | null = null;
 
   // ═══════════════════════════════════════════════════════════════
   // VISIBILITY & SCROLL TRACKING
@@ -215,6 +221,69 @@ export class PdfReaderStore {
       }),
       () => this.updateDocumentTitle(),
     );
+  }
+
+  /**
+   * PPI clamping constants to prevent bitmap blowup
+   */
+  private readonly MAX_SIDE_PX = 4096; // cap each side
+  private readonly MAX_AREA_PX = 16_000_000; // cap total pixels (~4Kx4K)
+  private readonly THUMB_PPI = 72; // Low-res thumb quality
+
+  /**
+   * Clamp PPI to prevent huge bitmaps that blow memory budget
+   * @param wPt Page width in points
+   * @param hPt Page height in points
+   * @param requestedPpi Desired PPI
+   * @returns Safe PPI that respects pixel dimension caps
+   */
+  private clampPpiForPage(
+    wPt: number,
+    hPt: number,
+    requestedPpi: number,
+  ): number {
+    // points → pixels: px = (pt * ppi) / 72
+    const ppiLimitBySide =
+      (this.MAX_SIDE_PX * 72) / Math.max(wPt, hPt) / this.devicePixelRatio;
+    const ppiLimitByArea =
+      Math.sqrt((this.MAX_AREA_PX * 72 * 72) / (wPt * hPt)) /
+      this.devicePixelRatio;
+    const safe = Math.min(requestedPpi, ppiLimitBySide, ppiLimitByArea);
+    return Math.max(72, Math.floor(safe)); // keep >=72ppi
+  }
+
+  /**
+   * Determine if we're in fast scroll mode
+   * Fast scroll means: render thumbs only, upgrade to full when idle
+   */
+  private isFastScrolling(): boolean {
+    // Consider "fast" if velocity > 5 pages/second
+    return this.scrollVelocity > 5;
+  }
+
+  /**
+   * Get effective PPI for rendering based on scroll mode
+   * @param pageNum Page number to render
+   * @param kind "thumb" or "full"
+   */
+  private getEffectivePpi(pageNum: number, kind: "thumb" | "full"): number {
+    if (kind === "thumb") {
+      return this.THUMB_PPI;
+    }
+
+    // Get page dimensions
+    const pageData = this.docState.getPageData(pageNum);
+    if (!pageData?.wPt || !pageData?.hPt) {
+      return this.ppi; // fallback
+    }
+
+    // If fast scrolling, use thumb PPI even for "full" requests
+    if (this.isFastScrolling()) {
+      return this.THUMB_PPI;
+    }
+
+    // Clamp requested PPI based on page size
+    return this.clampPpiForPage(pageData.wPt, pageData.hPt, this.ppi);
   }
 
   /**
@@ -438,10 +507,22 @@ export class PdfReaderStore {
     // Initialize Worker if supported
     if (this.useWorker) {
       try {
-        this.workerManager = new RenderWorkerManager();
+        this.workerManager = new RenderWorkerManager((err) => {
+          // Handle fatal worker errors
+          runInAction(() => {
+            this.error = `Worker error: ${err.message}`;
+            console.error("[PdfReaderStore] Worker fatal error:", err);
+          });
+        });
+
+        // Create a copy of the data for the worker (will be transferred via zero-copy)
+        // Keep the original for TOC loading and engine switching
+        // This one-time copy cost is acceptable vs. cloning on every postMessage
+        const workerData = new Uint8Array(data);
+
         const pageCount = await this.workerManager.init({
           engine: kind,
-          pdfData: data,
+          pdfData: workerData,
           wasmUrl: kind === "PDFium" ? DEFAULT_PDFIUM_WASM_URL : undefined,
         });
 
@@ -750,6 +831,33 @@ export class PdfReaderStore {
    * the render window, starting with least recently used.
    */
   /**
+   * Schedule gentle memory budget enforcement (debounced)
+   * Don't evict during hot scroll - wait for things to settle
+   */
+  private scheduleMemoryBudgetEnforcement() {
+    const totalBytes = this.memoryBytes + this.bitmapBytes;
+
+    // If we're far over budget (>130%), enforce immediately
+    if (totalBytes > this.memoryBudgetBytes * 1.3) {
+      if (this.budgetEvictionTimer !== null) {
+        clearTimeout(this.budgetEvictionTimer);
+        this.budgetEvictionTimer = null;
+      }
+      this.enforceMemoryBudget();
+      return;
+    }
+
+    // Otherwise, debounce evictions to avoid work during scroll
+    if (this.budgetEvictionTimer !== null) {
+      clearTimeout(this.budgetEvictionTimer);
+    }
+    this.budgetEvictionTimer = window.setTimeout(() => {
+      this.enforceMemoryBudget();
+      this.budgetEvictionTimer = null;
+    }, 100); // 100ms debounce
+  }
+
+  /**
    * Enforce memory budget by evicting bitmaps (LRU policy)
    *
    * Eviction priority:
@@ -921,28 +1029,55 @@ export class PdfReaderStore {
         return;
       }
 
-      await page.renderToCanvas(canvas, this.ppi);
+      // Use effective PPI (clamped based on page size and scroll mode)
+      const effectivePpi = this.getEffectivePpi(task.pageNumber, "full");
+      await page.renderToCanvas(canvas, effectivePpi);
 
       if (!task.abortSignal.aborted) {
-        // Create ImageBitmap from canvas for better memory management
-        const bitmap = await createImageBitmap(canvas);
+        // Try to create ImageBitmap for better memory management
+        // Fall back to canvas if createImageBitmap is not supported
+        try {
+          const bitmap = await createImageBitmap(canvas);
 
-        if (!task.abortSignal.aborted) {
-          // Store bitmap and update state
-          runInAction(() => {
-            this.storeBitmap(task.pageNumber, bitmap, "full");
+          if (!task.abortSignal.aborted) {
+            // Determine if this is a thumb or full bitmap based on effective PPI
+            const kind = effectivePpi === this.THUMB_PPI ? "thumb" : "full";
 
-            // Check if this is the page we were waiting for during initial restoration
-            if (
-              this.isRestoringInitialView &&
-              this.restoreTargetPageNum === task.pageNumber
-            ) {
-              this.finishInitialRestore();
-            }
-          });
-        } else {
-          // Clean up bitmap if aborted
-          bitmap.close();
+            // Store bitmap and update state
+            runInAction(() => {
+              this.storeBitmap(task.pageNumber, bitmap, kind);
+
+              // Check if this is the page we were waiting for during initial restoration
+              if (
+                this.isRestoringInitialView &&
+                this.restoreTargetPageNum === task.pageNumber
+              ) {
+                this.finishInitialRestore();
+              }
+            });
+          } else {
+            // Clean up bitmap if aborted
+            bitmap.close();
+          }
+        } catch (bitmapErr) {
+          // createImageBitmap not supported or failed - fall back to canvas
+          console.warn(
+            `[PdfReaderStore] createImageBitmap failed for page ${task.pageNumber}, using canvas fallback:`,
+            bitmapErr,
+          );
+          if (!task.abortSignal.aborted) {
+            runInAction(() => {
+              this.attachCanvas(task.pageNumber, canvas);
+
+              // Check if this is the page we were waiting for during initial restoration
+              if (
+                this.isRestoringInitialView &&
+                this.restoreTargetPageNum === task.pageNumber
+              ) {
+                this.finishInitialRestore();
+              }
+            });
+          }
         }
       }
     } catch (err) {
@@ -970,11 +1105,14 @@ export class PdfReaderStore {
 
       const taskId = `${task.pageNumber}-${Date.now()}`;
 
+      // Use effective PPI (clamped based on page size and scroll mode)
+      const effectivePpi = this.getEffectivePpi(task.pageNumber, "full");
+
       // Request render from Worker (0-based page index)
       const bitmap = await this.workerManager.renderPage(
         taskId,
         task.pageNumber - 1,
-        this.ppi,
+        effectivePpi,
       );
 
       // Check if task was aborted while waiting for Worker
@@ -983,9 +1121,12 @@ export class PdfReaderStore {
         return;
       }
 
+      // Determine if this is a thumb or full bitmap based on effective PPI
+      const kind = effectivePpi === this.THUMB_PPI ? "thumb" : "full";
+
       // Store bitmap and update state
       runInAction(() => {
-        this.storeBitmap(task.pageNumber, bitmap, "full");
+        this.storeBitmap(task.pageNumber, bitmap, kind);
 
         // Check if this is the page we were waiting for during initial restoration
         if (
@@ -1064,6 +1205,14 @@ export class PdfReaderStore {
    */
   get workerPendingCount(): number {
     return this.workerManager?.getPendingCount() ?? 0;
+  }
+
+  /**
+   * Check if Worker is responsive (receiving heartbeat responses)
+   * Returns false if worker hasn't responded to heartbeat within timeout
+   */
+  get isWorkerResponsive(): boolean {
+    return this.workerManager?.isWorkerResponsive ?? true;
   }
 
   /**
@@ -1271,6 +1420,31 @@ export class PdfReaderStore {
       return;
     }
 
+    // Track scroll velocity for adaptive quality
+    const now = Date.now();
+    const timeDelta = now - this.lastScrollTime;
+    const pageDelta = Math.abs(pageNum - this.lastScrollPage);
+
+    if (timeDelta > 0 && timeDelta < 1000) {
+      // Calculate pages per second
+      this.scrollVelocity = (pageDelta / timeDelta) * 1000;
+    } else {
+      this.scrollVelocity = 0;
+    }
+
+    this.lastScrollTime = now;
+    this.lastScrollPage = pageNum;
+
+    // Reset velocity to 0 after 200ms of no scrolling
+    if (this.scrollVelocityTimer !== null) {
+      clearTimeout(this.scrollVelocityTimer);
+    }
+    this.scrollVelocityTimer = window.setTimeout(() => {
+      this.scrollVelocity = 0;
+      // Trigger upgrade to full quality after scroll stops
+      this.triggerRender();
+    }, 200);
+
     // Calculate the page jump distance
     const oldPage = this.currentPage;
     const pageJump = Math.abs(pageNum - oldPage);
@@ -1287,11 +1461,8 @@ export class PdfReaderStore {
     // Trigger render with new current page
     this.triggerRender();
 
-    // Defer memory budget enforcement to avoid blocking page change
-    // Use setTimeout with 0 to run after current call stack clears
-    setTimeout(() => {
-      this.enforceMemoryBudget();
-    }, 0);
+    // Use gentle budget enforcement (debounced)
+    this.scheduleMemoryBudgetEnforcement();
 
     this.writeUrl();
 
@@ -1427,8 +1598,12 @@ export class PdfReaderStore {
     if (Math.abs(this.devicePixelRatio - dpr) < 0.001) return;
     this.devicePixelRatio = dpr;
     this.docState.setDevicePixelRatio(dpr);
+    // Mark all full bitmaps as stale before recalculating dimensions
+    this.markZoomStale();
     // Recalculate dimensions with new DPR
     this.recalculateDimensions();
+    // Trigger re-render with new DPR
+    this.triggerRender();
   }
 
   /**

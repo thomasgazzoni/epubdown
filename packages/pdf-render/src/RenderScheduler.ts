@@ -39,16 +39,29 @@ export class RenderScheduler {
   private readonly maxConcurrent: number;
   private readonly queue: { getNextTask(): RenderTask | null };
   private readonly worker: RenderWorker;
+  private readonly shouldRetry?: (task: RenderTask) => boolean;
   private running = 0;
+  // Track retry counts per page number (1-based)
+  private retryCount = new Map<number, number>();
+  private readonly maxRetries: number;
+  private readonly retryDelayMs: number;
+  // Retry backlog to avoid bypassing maxConcurrent limit
+  private retryBacklog: RenderTask[] = [];
 
   constructor(opts: {
     maxConcurrent: number;
     queue: { getNextTask(): RenderTask | null };
     worker: RenderWorker;
+    maxRetries?: number;
+    retryDelayMs?: number;
+    shouldRetry?: (task: RenderTask) => boolean;
   }) {
     this.maxConcurrent = opts.maxConcurrent;
     this.queue = opts.queue;
     this.worker = opts.worker;
+    this.maxRetries = opts.maxRetries ?? 1;
+    this.retryDelayMs = opts.retryDelayMs ?? 100;
+    this.shouldRetry = opts.shouldRetry;
   }
 
   /**
@@ -60,7 +73,11 @@ export class RenderScheduler {
    */
   pump() {
     while (this.running < this.maxConcurrent) {
-      const task = this.queue.getNextTask();
+      // First check retry backlog, then regular queue
+      const task =
+        this.retryBacklog.length > 0
+          ? this.retryBacklog.shift()!
+          : this.queue.getNextTask();
       if (!task) break;
       this.running++;
       void this.runTask(task);
@@ -68,12 +85,52 @@ export class RenderScheduler {
   }
 
   /**
-   * Execute a single render task and automatically pump for the next one
+   * Execute a single render task with retry on failure
    */
   private async runTask(task: RenderTask) {
     try {
       if (!task.abortSignal.aborted) {
         await this.worker(task);
+        // Success - clear retry count
+        this.retryCount.delete(task.pageNumber);
+      }
+    } catch (err) {
+      // Don't retry if task was aborted
+      if (task.abortSignal.aborted) {
+        this.retryCount.delete(task.pageNumber);
+        return;
+      }
+
+      // Check if we should retry this task (e.g., page may have left render window)
+      if (this.shouldRetry && !this.shouldRetry(task)) {
+        this.retryCount.delete(task.pageNumber);
+        return;
+      }
+
+      const retries = this.retryCount.get(task.pageNumber) ?? 0;
+      if (retries < this.maxRetries) {
+        // Schedule retry with backoff
+        this.retryCount.set(task.pageNumber, retries + 1);
+        const delay = this.retryDelayMs * Math.pow(2, retries); // Exponential backoff
+        console.warn(
+          `[RenderScheduler] Render failed for page ${task.pageNumber}, retry ${retries + 1}/${this.maxRetries} in ${delay}ms:`,
+          err,
+        );
+        // Enqueue into retry backlog instead of running directly
+        // This ensures we honor maxConcurrent limit
+        setTimeout(() => {
+          if (!task.abortSignal.aborted) {
+            this.retryBacklog.push(task);
+            this.pump();
+          }
+        }, delay);
+      } else {
+        // Max retries reached - log error and give up
+        console.error(
+          `[RenderScheduler] Render failed for page ${task.pageNumber} after ${this.maxRetries} retries:`,
+          err,
+        );
+        this.retryCount.delete(task.pageNumber);
       }
     } finally {
       this.running--;

@@ -78,6 +78,8 @@ export class PdfStateStore {
     for (const page of this.pages.values()) {
       this.updatePixelDimensions(page);
     }
+    // Mark all full bitmaps as stale to ensure upgrade path
+    this.markAllFullBitmapsStale();
   }
 
   setDevicePixelRatio(dpr: number) {
@@ -86,6 +88,8 @@ export class PdfStateStore {
     for (const page of this.pages.values()) {
       this.updateCssDimensions(page);
     }
+    // Mark all full bitmaps as stale for crisp re-render on display change
+    this.markAllFullBitmapsStale();
   }
 
   private updatePixelDimensions(page: PageData) {
@@ -98,8 +102,8 @@ export class PdfStateStore {
 
   private updateCssDimensions(page: PageData) {
     if (page.wPx && page.hPx) {
-      page.wCss = Math.max(1, Math.floor(page.wPx / this.devicePixelRatio));
-      page.hCss = Math.max(1, Math.floor(page.hPx / this.devicePixelRatio));
+      page.wCss = Math.max(1, Math.round(page.wPx / this.devicePixelRatio));
+      page.hCss = Math.max(1, Math.round(page.hPx / this.devicePixelRatio));
     }
   }
 

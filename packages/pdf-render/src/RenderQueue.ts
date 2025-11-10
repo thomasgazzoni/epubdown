@@ -164,8 +164,17 @@ export class RenderQueue {
     after: number;
     totalPages: number;
   }): void {
-    const { center, before, after, totalPages } = opts;
+    let { center, before, after, totalPages } = opts;
     this.currentPage = center;
+
+    // Ensure we won't exceed the max queue budget
+    const max = this.config.maxQueueSize;
+    const needed = 1 + before + after;
+    if (needed > max) {
+      const budgetAround = Math.max(0, Math.floor((max - 1) / 2));
+      before = Math.min(before, budgetAround);
+      after = Math.min(after, budgetAround);
+    }
 
     // Build target set (1-based page numbers)
     const target = new Set<number>();
@@ -236,12 +245,21 @@ export class RenderQueue {
         continue;
       }
 
+      // Determine if this task is better than the current selected task
+      // Priority order:
+      // 1. Lower priority number (closer to center)
+      // 2. Critical over prefetch at same priority
+      // 3. Page number as tiebreaker for stable ordering
       const isBetter =
         task.priority < minPriority ||
         (selected &&
           task.priority === minPriority &&
           task.kind === "critical" &&
-          selected.kind !== "critical");
+          selected.kind !== "critical") ||
+        (selected &&
+          task.priority === minPriority &&
+          task.kind === selected.kind &&
+          task.pageNumber < selected.pageNumber);
 
       if (isBetter) {
         minPriority = task.priority;

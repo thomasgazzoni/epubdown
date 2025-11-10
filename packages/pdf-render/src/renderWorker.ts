@@ -22,8 +22,12 @@ import type { DocumentHandle, PDFEngine, RendererKind } from "./engines/types";
 export interface InitMessage {
   type: "init";
   engine: RendererKind;
-  pdfData: Uint8Array;
+  pdfData: ArrayBuffer; // ArrayBuffer for zero-copy transfer
   wasmUrl?: string;
+}
+
+export interface InitDebugMessage {
+  type: "initDebug";
 }
 
 export interface RenderMessage {
@@ -43,11 +47,17 @@ export interface PageSizeMessage {
   pageIndex0: number;
 }
 
+export interface HeartbeatMessage {
+  type: "heartbeat";
+}
+
 export type WorkerRequest =
   | InitMessage
+  | InitDebugMessage
   | RenderMessage
   | CancelMessage
-  | PageSizeMessage;
+  | PageSizeMessage
+  | HeartbeatMessage;
 
 // Worker response types
 export interface ReadyResponse {
@@ -75,16 +85,32 @@ export interface PageSizeResponse {
   hPt: number;
 }
 
+export interface PongResponse {
+  type: "pong";
+  timestamp: number;
+}
+
 export type WorkerResponse =
   | ReadyResponse
   | BitmapResponse
   | ErrorResponse
-  | PageSizeResponse;
+  | PageSizeResponse
+  | PongResponse;
 
 // Worker state
 let engine: PDFEngine | null = null;
 let doc: DocumentHandle | null = null;
 const activeTasks = new Set<string>();
+let DEBUG = false;
+
+/**
+ * Worker logging helper - only logs when DEBUG is enabled
+ */
+function wlog(...args: unknown[]): void {
+  if (DEBUG) {
+    console.log("[Worker]", ...args);
+  }
+}
 
 /**
  * Handle incoming messages from main thread
@@ -94,6 +120,13 @@ self.onmessage = async (e: MessageEvent<WorkerRequest>) => {
 
   try {
     switch (msg.type) {
+      case "initDebug":
+        DEBUG = true;
+        wlog("Debug logging enabled");
+        return;
+      case "heartbeat":
+        handleHeartbeat();
+        return;
       case "init":
         await handleInit(msg);
         break;
@@ -122,11 +155,11 @@ self.onmessage = async (e: MessageEvent<WorkerRequest>) => {
  */
 async function handleInit(msg: InitMessage): Promise<void> {
   const startTime = performance.now();
-  console.log("[Worker] Initializing PDF engine:", msg.engine);
+  wlog("Initializing PDF engine:", msg.engine);
 
   try {
     // Create engine
-    console.log("[Worker] Creating engine...");
+    wlog("Creating engine...");
     if (msg.engine === "PDFJS") {
       engine = createPdfjsEngine();
     } else if (msg.engine === "PDFium") {
@@ -134,30 +167,27 @@ async function handleInit(msg: InitMessage): Promise<void> {
     } else {
       throw new Error(`Unknown engine: ${msg.engine}`);
     }
-    console.log(
-      `[Worker] Engine created in ${(performance.now() - startTime).toFixed(0)}ms`,
-    );
+    wlog(`Engine created in ${(performance.now() - startTime).toFixed(0)}ms`);
 
     // Initialize engine
     const initStart = performance.now();
-    console.log("[Worker] Initializing engine (loading WASM)...");
+    wlog("Initializing engine (loading WASM)...");
     await engine.init({
       wasmUrl: msg.wasmUrl,
       disableWorker: true, // We are the worker!
     });
-    console.log(
-      `[Worker] Engine initialized in ${(performance.now() - initStart).toFixed(0)}ms`,
+    wlog(
+      `Engine initialized in ${(performance.now() - initStart).toFixed(0)}ms`,
     );
 
     // Load document
     const loadStart = performance.now();
-    console.log(
-      `[Worker] Loading PDF document (${(msg.pdfData.length / 1024 / 1024).toFixed(2)} MB)...`,
+    const pdfData = new Uint8Array(msg.pdfData); // Re-wrap ArrayBuffer
+    wlog(
+      `Loading PDF document (${(pdfData.length / 1024 / 1024).toFixed(2)} MB)...`,
     );
-    doc = await engine.loadDocument(msg.pdfData);
-    console.log(
-      `[Worker] Document loaded in ${(performance.now() - loadStart).toFixed(0)}ms`,
-    );
+    doc = await engine.loadDocument(pdfData);
+    wlog(`Document loaded in ${(performance.now() - loadStart).toFixed(0)}ms`);
 
     const response: ReadyResponse = {
       type: "ready",
@@ -165,8 +195,8 @@ async function handleInit(msg: InitMessage): Promise<void> {
     };
 
     self.postMessage(response);
-    console.log(
-      `[Worker] READY - Total init time: ${(performance.now() - startTime).toFixed(0)}ms, pages: ${doc.pageCount()}`,
+    wlog(
+      `READY - Total init time: ${(performance.now() - startTime).toFixed(0)}ms, pages: ${doc.pageCount()}`,
     );
   } catch (err) {
     console.error("[Worker] Initialization failed:", err);
@@ -184,60 +214,60 @@ async function handleRender(msg: RenderMessage): Promise<void> {
 
   const { taskId, pageIndex0, ppi } = msg;
 
-  // Check if task was cancelled before starting
+  // Early cancel registration
   if (!activeTasks.has(taskId)) {
     activeTasks.add(taskId);
   }
 
-  console.log(
-    `[Worker] Rendering page ${pageIndex0 + 1} at ${ppi} PPI (task ${taskId})`,
-  );
+  wlog(`Rendering page ${pageIndex0 + 1} at ${ppi} PPI (task ${taskId})`);
 
-  // Get page size
-  const { wPt, hPt } = await doc.getPageSize(pageIndex0);
-
-  // Calculate pixel dimensions
-  const wPx = Math.max(1, Math.floor((wPt * ppi) / 72));
-  const hPx = Math.max(1, Math.floor((hPt * ppi) / 72));
-
-  // Check if cancelled
+  // Check if cancelled before loading page
   if (!activeTasks.has(taskId)) {
-    console.log(`[Worker] Task ${taskId} cancelled before render`);
+    wlog(`Task ${taskId} cancelled before loadPage`);
     return;
   }
 
-  // Create OffscreenCanvas
-  const offscreen = new OffscreenCanvas(wPx, hPx);
-  const ctx = offscreen.getContext("2d");
-  if (!ctx) {
-    throw new Error("Failed to get 2D context from OffscreenCanvas");
-  }
-
-  // Load page and render
+  // Load page first (single operation instead of getPageSize + loadPage)
   const page = await doc.loadPage(pageIndex0);
 
   try {
     // Check if cancelled before rendering
     if (!activeTasks.has(taskId)) {
-      console.log(`[Worker] Task ${taskId} cancelled before page.render`);
-      page.destroy();
+      wlog(`Task ${taskId} cancelled after loadPage`);
       return;
     }
 
+    // Create OffscreenCanvas - engine will size it during render
+    // Starting with 1x1; renderToCanvas will set the correct size
+    const offscreen = new OffscreenCanvas(1, 1);
+
     // Render to OffscreenCanvas
-    // Note: The renderToCanvas method expects HTMLCanvasElement, but
-    // OffscreenCanvas has the same API for 2D context, so this works
-    await (page as any).renderToCanvas(offscreen as any, ppi);
+    // The engine will size the canvas based on page dimensions and PPI
+    await page.renderToCanvas(offscreen, ppi);
 
     // Check if cancelled after rendering
     if (!activeTasks.has(taskId)) {
-      console.log(`[Worker] Task ${taskId} cancelled after render`);
-      page.destroy();
+      wlog(`Task ${taskId} cancelled after render`);
       return;
     }
 
     // Transfer bitmap to main thread (zero-copy transfer)
-    const bitmap = offscreen.transferToImageBitmap();
+    // Note: Safari compatibility is verified by canUseOffscreenPipeline() before worker creation
+    // This try-catch is a defensive fallback in case feature detection fails
+    let bitmap: ImageBitmap;
+    try {
+      bitmap = offscreen.transferToImageBitmap();
+    } catch (err) {
+      // transferToImageBitmap not supported - this should be caught by feature detection
+      // but we handle it gracefully just in case
+      console.error(
+        "[Worker] transferToImageBitmap failed (should be caught by feature detection):",
+        err,
+      );
+      throw new Error(
+        "transferToImageBitmap not supported - worker should not be initialized",
+      );
+    }
 
     const response: BitmapResponse = {
       type: "bitmap",
@@ -249,8 +279,8 @@ async function handleRender(msg: RenderMessage): Promise<void> {
     // Transfer bitmap ownership to main thread
     (self as any).postMessage(response, [bitmap]);
 
-    console.log(
-      `[Worker] Completed page ${pageIndex0 + 1} (${wPx}x${hPx}) task ${taskId}`,
+    wlog(
+      `Completed page ${pageIndex0 + 1} (${bitmap.width}x${bitmap.height}) task ${taskId}`,
     );
   } finally {
     activeTasks.delete(taskId);
@@ -262,7 +292,7 @@ async function handleRender(msg: RenderMessage): Promise<void> {
  * Cancel an active render task
  */
 function handleCancel(msg: CancelMessage): void {
-  console.log(`[Worker] Cancelling task ${msg.taskId}`);
+  wlog(`Cancelling task ${msg.taskId}`);
   activeTasks.delete(msg.taskId);
 }
 
@@ -284,6 +314,19 @@ async function handlePageSize(msg: PageSizeMessage): Promise<void> {
   };
 
   self.postMessage(response);
+}
+
+/**
+ * Handle heartbeat ping from main thread
+ * Responds immediately with a pong to indicate worker is alive
+ */
+function handleHeartbeat(): void {
+  const response: PongResponse = {
+    type: "pong",
+    timestamp: performance.now(),
+  };
+  self.postMessage(response);
+  wlog("Heartbeat pong sent");
 }
 
 export {};

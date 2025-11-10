@@ -7,6 +7,10 @@ import type { PdfReaderStore } from "../stores/PdfReaderStore";
  * Feature flag for bitmaprenderer optimization
  * When true, uses bitmaprenderer context for zero-copy bitmap transfer
  * When false, uses 2D context with drawImage (safer, no flashing)
+ *
+ * NOTE: Currently disabled because transferFromImageBitmap detaches the bitmap,
+ * which conflicts with our long-lived bitmap caching strategy. To enable this,
+ * we would need to remove bitmaps from cache after transfer and re-render on demand.
  */
 const USE_BITMAP_RENDERER = false;
 
@@ -91,28 +95,18 @@ const CanvasHost: React.FC<{
         bmCanvas.height = bitmap.height;
       }
 
-      // Optional: Try bitmaprenderer for zero-copy transfer when enabled
+      // Use bitmaprenderer for zero-copy transfer when enabled
       if (USE_BITMAP_RENDERER) {
         const ctx = bmCanvas.getContext(
           "bitmaprenderer",
         ) as ImageBitmapRenderingContext | null;
         if (ctx) {
-          // Clone the bitmap to avoid detaching the cached one
-          createImageBitmap(bitmap)
-            .then((cloned) => {
-              ctx.transferFromImageBitmap(cloned);
-            })
-            .catch((err) => {
-              console.warn("[PageSlot] createImageBitmap failed:", err);
-              // Fallback to 2D context
-              const ctx2d = bmCanvas.getContext("2d");
-              if (ctx2d) {
-                ctx2d.clearRect(0, 0, bmCanvas.width, bmCanvas.height);
-                ctx2d.drawImage(bitmap, 0, 0);
-              }
-            });
+          // Transfer bitmap ownership to canvas (zero-copy)
+          // Note: This detaches the bitmap, so we must NOT reuse it
+          ctx.transferFromImageBitmap(bitmap);
+          // Bitmap is now owned by canvas, no need to close it here
         } else {
-          // Fallback: Use 2D context to draw bitmap
+          // Fallback: Use 2D context to draw bitmap (copy pixels)
           const ctx2d = bmCanvas.getContext("2d");
           if (ctx2d) {
             ctx2d.clearRect(0, 0, bmCanvas.width, bmCanvas.height);
@@ -120,8 +114,7 @@ const CanvasHost: React.FC<{
           }
         }
       } else {
-        // Default: Use 2D context to draw bitmap (don't transfer ownership)
-        // Note: transferFromImageBitmap would detach the bitmap, causing flashing
+        // Default: Use 2D context to draw bitmap (copy pixels)
         const ctx2d = bmCanvas.getContext("2d");
         if (ctx2d) {
           ctx2d.clearRect(0, 0, bmCanvas.width, bmCanvas.height);

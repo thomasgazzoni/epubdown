@@ -12,7 +12,7 @@ import type { PdfReaderStore } from "../stores/PdfReaderStore";
  * which conflicts with our long-lived bitmap caching strategy. To enable this,
  * we would need to remove bitmaps from cache after transfer and re-render on demand.
  */
-const USE_BITMAP_RENDERER = false;
+const USE_BITMAP_RENDERER = true;
 
 /**
  * Canvas/Bitmap display component with efficient rendering
@@ -86,39 +86,43 @@ const CanvasHost: React.FC<{
 
       const bmCanvas = bitmapCanvasRef.current;
 
-      // Set canvas dimensions to container size (not bitmap native size)
-      // This ensures thumbnails scale up to fill the space, preventing visual jumps
-      if (bmCanvas.width !== width || bmCanvas.height !== height) {
-        bmCanvas.width = width;
-        bmCanvas.height = height;
-      }
+      // Only update canvas content when bitmap actually changes
+      // This prevents trying to transfer an already-detached bitmap
+      if (bitmapChanged) {
+        // Set canvas dimensions to container size (not bitmap native size)
+        // This ensures thumbnails scale up to fill the space, preventing visual jumps
+        if (bmCanvas.width !== width || bmCanvas.height !== height) {
+          bmCanvas.width = width;
+          bmCanvas.height = height;
+        }
 
-      // Use bitmaprenderer for zero-copy transfer when enabled
-      if (USE_BITMAP_RENDERER) {
-        const ctx = bmCanvas.getContext(
-          "bitmaprenderer",
-        ) as ImageBitmapRenderingContext | null;
-        if (ctx) {
-          // Transfer bitmap ownership to canvas (zero-copy)
-          // Note: This detaches the bitmap, so we must NOT reuse it
-          ctx.transferFromImageBitmap(bitmap);
-          // Bitmap is now owned by canvas, no need to close it here
+        // Use bitmaprenderer for zero-copy transfer when enabled
+        if (USE_BITMAP_RENDERER) {
+          const ctx = bmCanvas.getContext(
+            "bitmaprenderer",
+          ) as ImageBitmapRenderingContext | null;
+          if (ctx) {
+            // Transfer bitmap ownership to canvas (zero-copy)
+            // Note: This detaches the bitmap, so we must NOT reuse it
+            ctx.transferFromImageBitmap(bitmap);
+            // Bitmap is now owned by canvas, no need to close it here
+          } else {
+            // Fallback: Use 2D context to draw bitmap scaled to container
+            const ctx2d = bmCanvas.getContext("2d");
+            if (ctx2d) {
+              ctx2d.clearRect(0, 0, width, height);
+              // Scale bitmap to fill container dimensions
+              ctx2d.drawImage(bitmap, 0, 0, width, height);
+            }
+          }
         } else {
-          // Fallback: Use 2D context to draw bitmap scaled to container
+          // Default: Use 2D context to draw bitmap scaled to container
           const ctx2d = bmCanvas.getContext("2d");
           if (ctx2d) {
             ctx2d.clearRect(0, 0, width, height);
             // Scale bitmap to fill container dimensions
             ctx2d.drawImage(bitmap, 0, 0, width, height);
           }
-        }
-      } else {
-        // Default: Use 2D context to draw bitmap scaled to container
-        const ctx2d = bmCanvas.getContext("2d");
-        if (ctx2d) {
-          ctx2d.clearRect(0, 0, width, height);
-          // Scale bitmap to fill container dimensions
-          ctx2d.drawImage(bitmap, 0, 0, width, height);
         }
       }
 

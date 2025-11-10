@@ -12,7 +12,7 @@ import type { PdfReaderStore } from "../stores/PdfReaderStore";
  * which conflicts with our long-lived bitmap caching strategy. To enable this,
  * we would need to remove bitmaps from cache after transfer and re-render on demand.
  */
-const USE_BITMAP_RENDERER = false;
+const USE_BITMAP_RENDERER = true;
 
 /**
  * Canvas/Bitmap display component with efficient rendering

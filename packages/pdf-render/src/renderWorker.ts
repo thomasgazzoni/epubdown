@@ -240,7 +240,22 @@ async function handleRender(msg: RenderMessage): Promise<void> {
     }
 
     // Transfer bitmap to main thread (zero-copy transfer)
-    const bitmap = offscreen.transferToImageBitmap();
+    // Note: Safari compatibility is verified by canUseOffscreenPipeline() before worker creation
+    // This try-catch is a defensive fallback in case feature detection fails
+    let bitmap: ImageBitmap;
+    try {
+      bitmap = offscreen.transferToImageBitmap();
+    } catch (err) {
+      // transferToImageBitmap not supported - this should be caught by feature detection
+      // but we handle it gracefully just in case
+      console.error(
+        "[Worker] transferToImageBitmap failed (should be caught by feature detection):",
+        err,
+      );
+      throw new Error(
+        "transferToImageBitmap not supported - worker should not be initialized",
+      );
+    }
 
     const response: BitmapResponse = {
       type: "bitmap",

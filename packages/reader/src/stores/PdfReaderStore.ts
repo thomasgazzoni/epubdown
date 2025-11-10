@@ -936,25 +936,47 @@ export class PdfReaderStore {
       await page.renderToCanvas(canvas, this.ppi);
 
       if (!task.abortSignal.aborted) {
-        // Create ImageBitmap from canvas for better memory management
-        const bitmap = await createImageBitmap(canvas);
+        // Try to create ImageBitmap for better memory management
+        // Fall back to canvas if createImageBitmap is not supported
+        try {
+          const bitmap = await createImageBitmap(canvas);
 
-        if (!task.abortSignal.aborted) {
-          // Store bitmap and update state
-          runInAction(() => {
-            this.storeBitmap(task.pageNumber, bitmap, "full");
+          if (!task.abortSignal.aborted) {
+            // Store bitmap and update state
+            runInAction(() => {
+              this.storeBitmap(task.pageNumber, bitmap, "full");
 
-            // Check if this is the page we were waiting for during initial restoration
-            if (
-              this.isRestoringInitialView &&
-              this.restoreTargetPageNum === task.pageNumber
-            ) {
-              this.finishInitialRestore();
-            }
-          });
-        } else {
-          // Clean up bitmap if aborted
-          bitmap.close();
+              // Check if this is the page we were waiting for during initial restoration
+              if (
+                this.isRestoringInitialView &&
+                this.restoreTargetPageNum === task.pageNumber
+              ) {
+                this.finishInitialRestore();
+              }
+            });
+          } else {
+            // Clean up bitmap if aborted
+            bitmap.close();
+          }
+        } catch (bitmapErr) {
+          // createImageBitmap not supported or failed - fall back to canvas
+          console.warn(
+            `[PdfReaderStore] createImageBitmap failed for page ${task.pageNumber}, using canvas fallback:`,
+            bitmapErr,
+          );
+          if (!task.abortSignal.aborted) {
+            runInAction(() => {
+              this.attachCanvas(task.pageNumber, canvas);
+
+              // Check if this is the page we were waiting for during initial restoration
+              if (
+                this.isRestoringInitialView &&
+                this.restoreTargetPageNum === task.pageNumber
+              ) {
+                this.finishInitialRestore();
+              }
+            });
+          }
         }
       }
     } catch (err) {

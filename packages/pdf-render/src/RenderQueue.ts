@@ -245,12 +245,21 @@ export class RenderQueue {
         continue;
       }
 
+      // Determine if this task is better than the current selected task
+      // Priority order:
+      // 1. Lower priority number (closer to center)
+      // 2. Critical over prefetch at same priority
+      // 3. Page number as tiebreaker for stable ordering
       const isBetter =
         task.priority < minPriority ||
         (selected &&
           task.priority === minPriority &&
           task.kind === "critical" &&
-          selected.kind !== "critical");
+          selected.kind !== "critical") ||
+        (selected &&
+          task.priority === minPriority &&
+          task.kind === selected.kind &&
+          task.pageNumber < selected.pageNumber);
 
       if (isBetter) {
         minPriority = task.priority;

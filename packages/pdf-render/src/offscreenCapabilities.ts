@@ -58,6 +58,34 @@ export function detectOffscreenCapabilities() {
 }
 
 /**
+ * Check if we can render in a Worker
+ * Requires OffscreenCanvas and createImageBitmap
+ */
+export function canRenderInWorker(): boolean {
+  if (typeof OffscreenCanvas === "undefined") return false;
+  // createImageBitmap is used to convert offscreen canvas to ImageBitmap
+  const hasCreate =
+    typeof createImageBitmap === "function" ||
+    (typeof window !== "undefined" &&
+      typeof (window as any).createImageBitmap === "function");
+  return hasCreate;
+}
+
+/**
+ * Check if we can use zero-copy bitmap display
+ * Requires bitmaprenderer context on main thread
+ */
+export function canZeroCopyDisplay(): boolean {
+  // main-thread bitmaprenderer context
+  try {
+    const c = document.createElement("canvas").getContext("bitmaprenderer");
+    return !!(c && "transferFromImageBitmap" in (c as any));
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Check if we can use the full OffscreenCanvas pipeline:
  * Worker rendering + zero-copy bitmap transfer
  */

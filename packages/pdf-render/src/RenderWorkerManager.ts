@@ -15,7 +15,7 @@ import type {
   BitmapResponse,
 } from "./renderWorker";
 import type { RendererKind } from "./engines/types";
-import { canUseOffscreenPipeline } from "./offscreenCapabilities";
+import { canRenderInWorker } from "./offscreenCapabilities";
 
 export interface RenderTask {
   taskId: string;
@@ -65,11 +65,7 @@ export class RenderWorkerManager {
    * Check if OffscreenCanvas Worker rendering is supported
    */
   static isSupported(): boolean {
-    return (
-      typeof Worker !== "undefined" &&
-      canUseOffscreenPipeline() &&
-      typeof OffscreenCanvas !== "undefined"
-    );
+    return typeof Worker !== "undefined" && canRenderInWorker();
   }
 
   /**

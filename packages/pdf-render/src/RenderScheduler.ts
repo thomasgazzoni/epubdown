@@ -45,6 +45,8 @@ export class RenderScheduler {
   private retryCount = new Map<number, number>();
   private readonly maxRetries: number;
   private readonly retryDelayMs: number;
+  // Retry backlog to avoid bypassing maxConcurrent limit
+  private retryBacklog: RenderTask[] = [];
 
   constructor(opts: {
     maxConcurrent: number;
@@ -71,7 +73,11 @@ export class RenderScheduler {
    */
   pump() {
     while (this.running < this.maxConcurrent) {
-      const task = this.queue.getNextTask();
+      // First check retry backlog, then regular queue
+      const task =
+        this.retryBacklog.length > 0
+          ? this.retryBacklog.shift()!
+          : this.queue.getNextTask();
       if (!task) break;
       this.running++;
       void this.runTask(task);
@@ -110,10 +116,12 @@ export class RenderScheduler {
           `[RenderScheduler] Render failed for page ${task.pageNumber}, retry ${retries + 1}/${this.maxRetries} in ${delay}ms:`,
           err,
         );
+        // Enqueue into retry backlog instead of running directly
+        // This ensures we honor maxConcurrent limit
         setTimeout(() => {
           if (!task.abortSignal.aborted) {
-            this.running++;
-            void this.runTask(task);
+            this.retryBacklog.push(task);
+            this.pump();
           }
         }, delay);
       } else {

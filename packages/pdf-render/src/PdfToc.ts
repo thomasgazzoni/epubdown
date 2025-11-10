@@ -84,7 +84,7 @@ export class PdfTocStore {
    * Uses level, pageNumber, and title hash for stability across reloads
    * Avoids using index to prevent ID churn when outline is regenerated
    */
-  private generateNodeId(item: OutlineItem, index: number): string {
+  private generateNodeId(item: OutlineItem): string {
     // Simple hash: sanitized portion of title for uniqueness
     const titleHash = item.title.slice(0, 64).replace(/[^a-zA-Z0-9]/g, "_");
     return `${item.level}/${item.pageNumber}/${titleHash}`;
@@ -118,7 +118,7 @@ export class PdfTocStore {
       if (!item) continue;
 
       const node: TocNode = {
-        id: this.generateNodeId(item, i),
+        id: this.generateNodeId(item),
         title: item.title,
         pageNumber: item.pageNumber,
         level: item.level,
@@ -235,7 +235,7 @@ export class PdfTocStore {
     if (!nearestItem || nearestIndex === -1) return null;
 
     // Generate the ID and find the node in the tree
-    const id = this.generateNodeId(nearestItem, nearestIndex);
+    const id = this.generateNodeId(nearestItem);
     const findNode = (nodes: TocNode[]): TocNode | null => {
       for (const node of nodes) {
         if (node.id === id) return node;
@@ -296,6 +296,10 @@ export class PdfTocStore {
   expandToActive(): void {
     if (!this.activeItemId) return;
 
+    // Build from the full outline when computing parents
+    // to avoid issues when a filter is active
+    const fullTree = this.buildTree(this.outline);
+
     // Find all parent IDs by walking up the tree
     const parentIds: string[] = [];
     const findParents = (nodes: TocNode[], targetId: string): boolean => {
@@ -311,7 +315,7 @@ export class PdfTocStore {
       return false;
     };
 
-    findParents(this.tree, this.activeItemId);
+    findParents(fullTree, this.activeItemId);
 
     // Expand all parent nodes
     for (const id of parentIds) {

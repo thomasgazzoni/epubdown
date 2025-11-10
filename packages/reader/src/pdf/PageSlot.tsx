@@ -4,13 +4,13 @@ import type { PageData } from "@epubdown/pdf-render";
 import type { PdfReaderStore } from "../stores/PdfReaderStore";
 
 /**
- * Feature flag for bitmaprenderer optimization
- * When true, uses bitmaprenderer context for zero-copy bitmap transfer
- * When false, uses 2D context with drawImage (safer, no flashing)
+ * Feature flag for bitmap rendering approach
+ * When true, uses 2D context drawImage for bitmap rendering with caching support
+ * When false, uses 2D context drawImage (same behavior currently)
  *
- * NOTE: Currently disabled because transferFromImageBitmap detaches the bitmap,
- * which conflicts with our long-lived bitmap caching strategy. To enable this,
- * we would need to remove bitmaps from cache after transfer and re-render on demand.
+ * NOTE: We always use drawImage instead of transferFromImageBitmap because
+ * transferFromImageBitmap detaches the bitmap, making it unusable for caching.
+ * This flag is kept for potential future optimization experiments.
  */
 const USE_BITMAP_RENDERER = true;
 
@@ -18,12 +18,12 @@ const USE_BITMAP_RENDERER = true;
  * Canvas/Bitmap display component with efficient rendering
  *
  * This component handles displaying ImageBitmaps or HTMLCanvasElements:
- * - ImageBitmap: Uses bitmaprenderer context for zero-copy transfer
+ * - ImageBitmap: Uses 2D context drawImage to copy pixel data to canvas
  * - HTMLCanvasElement: Reparents the canvas (fallback for engines)
  * - null: Shows loading placeholder
  *
- * The bitmaprenderer approach is more efficient than 2D context drawing
- * because it transfers ownership without copying pixel data.
+ * We use drawImage instead of transferFromImageBitmap to preserve cached bitmaps
+ * for reuse when navigating back and forth between pages.
  */
 const CanvasHost: React.FC<{
   bitmap: ImageBitmap | null;
@@ -73,7 +73,7 @@ const CanvasHost: React.FC<{
       onMounted?.();
     };
 
-    // Priority 1: Bitmap via bitmaprenderer (most efficient)
+    // Priority 1: Bitmap via 2D context drawImage
     if (bitmap) {
       // Create or reuse bitmap canvas
       if (!bitmapCanvasRef.current) {
@@ -96,33 +96,17 @@ const CanvasHost: React.FC<{
           bmCanvas.height = height;
         }
 
-        // Use bitmaprenderer for zero-copy transfer when enabled
-        if (USE_BITMAP_RENDERER) {
-          const ctx = bmCanvas.getContext(
-            "bitmaprenderer",
-          ) as ImageBitmapRenderingContext | null;
-          if (ctx) {
-            // Transfer bitmap ownership to canvas (zero-copy)
-            // Note: This detaches the bitmap, so we must NOT reuse it
-            ctx.transferFromImageBitmap(bitmap);
-            // Bitmap is now owned by canvas, no need to close it here
-          } else {
-            // Fallback: Use 2D context to draw bitmap scaled to container
-            const ctx2d = bmCanvas.getContext("2d");
-            if (ctx2d) {
-              ctx2d.clearRect(0, 0, width, height);
-              // Scale bitmap to fill container dimensions
-              ctx2d.drawImage(bitmap, 0, 0, width, height);
-            }
-          }
-        } else {
-          // Default: Use 2D context to draw bitmap scaled to container
-          const ctx2d = bmCanvas.getContext("2d");
-          if (ctx2d) {
-            ctx2d.clearRect(0, 0, width, height);
-            // Scale bitmap to fill container dimensions
-            ctx2d.drawImage(bitmap, 0, 0, width, height);
-          }
+        // Use 2D context to draw bitmap scaled to container
+        // Note: We use drawImage instead of transferFromImageBitmap because
+        // transferFromImageBitmap detaches the bitmap, making it unusable for
+        // caching. When navigating back and forth, components may unmount/remount
+        // and try to reuse already-detached bitmaps from cache. drawImage copies
+        // the pixel data, leaving the cached bitmap intact for reuse.
+        const ctx2d = bmCanvas.getContext("2d");
+        if (ctx2d) {
+          ctx2d.clearRect(0, 0, width, height);
+          // Scale bitmap to fill container dimensions
+          ctx2d.drawImage(bitmap, 0, 0, width, height);
         }
       }
 

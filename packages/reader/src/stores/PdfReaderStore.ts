@@ -438,7 +438,13 @@ export class PdfReaderStore {
     // Initialize Worker if supported
     if (this.useWorker) {
       try {
-        this.workerManager = new RenderWorkerManager();
+        this.workerManager = new RenderWorkerManager((err) => {
+          // Handle fatal worker errors
+          runInAction(() => {
+            this.error = `Worker error: ${err.message}`;
+            console.error("[PdfReaderStore] Worker fatal error:", err);
+          });
+        });
         const pageCount = await this.workerManager.init({
           engine: kind,
           pdfData: data,
@@ -1427,8 +1433,12 @@ export class PdfReaderStore {
     if (Math.abs(this.devicePixelRatio - dpr) < 0.001) return;
     this.devicePixelRatio = dpr;
     this.docState.setDevicePixelRatio(dpr);
+    // Mark all full bitmaps as stale before recalculating dimensions
+    this.markZoomStale();
     // Recalculate dimensions with new DPR
     this.recalculateDimensions();
+    // Trigger re-render with new DPR
+    this.triggerRender();
   }
 
   /**

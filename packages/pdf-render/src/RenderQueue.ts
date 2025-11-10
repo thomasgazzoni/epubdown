@@ -164,8 +164,17 @@ export class RenderQueue {
     after: number;
     totalPages: number;
   }): void {
-    const { center, before, after, totalPages } = opts;
+    let { center, before, after, totalPages } = opts;
     this.currentPage = center;
+
+    // Ensure we won't exceed the max queue budget
+    const max = this.config.maxQueueSize;
+    const needed = 1 + before + after;
+    if (needed > max) {
+      const budgetAround = Math.max(0, Math.floor((max - 1) / 2));
+      before = Math.min(before, budgetAround);
+      after = Math.min(after, budgetAround);
+    }
 
     // Build target set (1-based page numbers)
     const target = new Set<number>();

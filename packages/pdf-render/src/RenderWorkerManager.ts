@@ -40,6 +40,11 @@ export class RenderWorkerManager {
   private initTimeoutId: number | null = null;
 
   /**
+   * Optional callback to handle fatal worker errors
+   */
+  constructor(private onFatalError?: (err: Error) => void) {}
+
+  /**
    * Check if OffscreenCanvas Worker rendering is supported
    */
   static isSupported(): boolean {
@@ -93,18 +98,21 @@ export class RenderWorkerManager {
 
     this.worker.onerror = (err) => {
       console.error("[WorkerManager] Worker error:", err);
+      const error = new Error("Worker crashed");
       // Fail all pending tasks
       for (const task of this.tasks.values()) {
-        task.onError(new Error("Worker crashed"));
+        task.onError(error);
       }
       this.tasks.clear();
+      // Notify UI of fatal error
+      this.onFatalError?.(error);
     };
 
-    // Send init message
-    const initMsg: WorkerRequest = {
-      type: "init",
+    // Send init message with ArrayBuffer transfer (zero-copy)
+    const initMsg = {
+      type: "init" as const,
       engine: options.engine,
-      pdfData: options.pdfData,
+      pdfData: options.pdfData.buffer, // ArrayBuffer
       wasmUrl: options.wasmUrl,
     };
 
@@ -155,7 +163,8 @@ export class RenderWorkerManager {
         }
       };
 
-      this.worker!.postMessage(initMsg);
+      // Transfer the underlying buffer to the worker (zero copy)
+      this.worker!.postMessage(initMsg, [initMsg.pdfData]);
       console.log("[WorkerManager] Init message posted to worker");
     });
   }

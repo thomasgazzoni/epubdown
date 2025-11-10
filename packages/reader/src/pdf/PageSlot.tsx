@@ -12,7 +12,7 @@ import type { PdfReaderStore } from "../stores/PdfReaderStore";
  * which conflicts with our long-lived bitmap caching strategy. To enable this,
  * we would need to remove bitmaps from cache after transfer and re-render on demand.
  */
-const USE_BITMAP_RENDERER = true;
+const USE_BITMAP_RENDERER = false;
 
 /**
  * Canvas/Bitmap display component with efficient rendering
@@ -86,13 +86,11 @@ const CanvasHost: React.FC<{
 
       const bmCanvas = bitmapCanvasRef.current;
 
-      // Only update canvas dimensions if they've changed (setting width/height clears canvas)
-      if (
-        bmCanvas.width !== bitmap.width ||
-        bmCanvas.height !== bitmap.height
-      ) {
-        bmCanvas.width = bitmap.width;
-        bmCanvas.height = bitmap.height;
+      // Set canvas dimensions to container size (not bitmap native size)
+      // This ensures thumbnails scale up to fill the space, preventing visual jumps
+      if (bmCanvas.width !== width || bmCanvas.height !== height) {
+        bmCanvas.width = width;
+        bmCanvas.height = height;
       }
 
       // Use bitmaprenderer for zero-copy transfer when enabled
@@ -106,19 +104,21 @@ const CanvasHost: React.FC<{
           ctx.transferFromImageBitmap(bitmap);
           // Bitmap is now owned by canvas, no need to close it here
         } else {
-          // Fallback: Use 2D context to draw bitmap (copy pixels)
+          // Fallback: Use 2D context to draw bitmap scaled to container
           const ctx2d = bmCanvas.getContext("2d");
           if (ctx2d) {
-            ctx2d.clearRect(0, 0, bmCanvas.width, bmCanvas.height);
-            ctx2d.drawImage(bitmap, 0, 0);
+            ctx2d.clearRect(0, 0, width, height);
+            // Scale bitmap to fill container dimensions
+            ctx2d.drawImage(bitmap, 0, 0, width, height);
           }
         }
       } else {
-        // Default: Use 2D context to draw bitmap (copy pixels)
+        // Default: Use 2D context to draw bitmap scaled to container
         const ctx2d = bmCanvas.getContext("2d");
         if (ctx2d) {
-          ctx2d.clearRect(0, 0, bmCanvas.width, bmCanvas.height);
-          ctx2d.drawImage(bitmap, 0, 0);
+          ctx2d.clearRect(0, 0, width, height);
+          // Scale bitmap to fill container dimensions
+          ctx2d.drawImage(bitmap, 0, 0, width, height);
         }
       }
 

@@ -135,9 +135,9 @@ const ZoomControlsObserver: FC<{
  * 5. INITIAL PAGE RESTORATION:
  *    - Read URL params: ?page=N&ppi=N&position=0.0-1.0
  *    - Wait for dimensionRevision > 0 (page sizes loaded)
- *    - Store manages restoration state (isRestoringInitialView)
- *    - Loading overlay shown based on store state (single source of truth)
- *    - Store completes restoration when target page renders or timeout fires
+ *    - Store manages restoration state via RestorationController
+ *    - Loading overlay shown based on restoration.shouldShowOverlay
+ *    - State machine: idle → initializing → ready → scrolling → complete
  *    - preventUrlWrite flag prevents URL flickering
  *
  * 6. KEYBOARD SHORTCUTS:
@@ -155,7 +155,7 @@ const ZoomControlsObserver: FC<{
  * STATE MANAGEMENT:
  * - hasRestoredRef: Tracks if initial page restoration has been attempted
  * - slotRefs: Array of page slot DOM elements for scrolling and visibility tracking
- * - Store manages: zoomMode, pendingScrollRestore, devicePixelRatio, isRestoringInitialView
+ * - Store manages: zoomMode, pendingScrollRestore, devicePixelRatio, restoration controller
  *
  * REFACTORING NOTES:
  * - Zoom logic lives in store for centralized state management
@@ -641,7 +641,7 @@ export const PdfViewer = observer(({ store }: PdfViewerProps) => {
       />
 
       {/* Loading overlay during page restoration */}
-      {store.isRestoringInitialView && (
+      {store.restoration.shouldShowOverlay && (
         <div className="absolute inset-0 z-50 bg-gray-100 flex items-center justify-center">
           <div className="text-gray-500">Loading PDF…</div>
         </div>

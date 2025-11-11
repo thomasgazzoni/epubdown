@@ -317,19 +317,7 @@ export class PdfReaderStore {
   // INITIAL VIEW RESTORATION STATE
   // ═══════════════════════════════════════════════════════════════
   // restoration: State machine for managing initial page restoration from URL
-  // Replaces old isRestoringInitialView/restoreTargetPageNum/restoreTargetPosition flags
   restoration = new RestorationController();
-
-  // Legacy compatibility getters (will be removed)
-  get isRestoringInitialView(): boolean {
-    return this.restoration.shouldShowOverlay;
-  }
-  get restoreTargetPageNum(): number | null {
-    return this.restoration.targetPage;
-  }
-  get restoreTargetPosition(): number {
-    return this.restoration.targetPosition;
-  }
 
   // ═══════════════════════════════════════════════════════════════
   // TABLE OF CONTENTS STATE
@@ -678,7 +666,7 @@ export class PdfReaderStore {
           this.initializeRenderInfrastructure();
 
           // Initialize state - preserve currentPage during URL restoration
-          if (!this.isRestoringInitialView) {
+          if (!this.restoration.isRestoring) {
             this.currentPage = 1;
           }
         });
@@ -736,7 +724,7 @@ export class PdfReaderStore {
       this.initializeRenderInfrastructure();
 
       // Initialize state (1-based page numbers) - preserve currentPage during URL restoration
-      if (!this.isRestoringInitialView) {
+      if (!this.restoration.isRestoring) {
         this.currentPage = 1;
       }
 
@@ -1260,14 +1248,6 @@ export class PdfReaderStore {
             // Store bitmap and update state
             runInAction(() => {
               this.storeBitmap(task.pageNumber, bitmap);
-
-              // Check if this is the page we were waiting for during initial restoration
-              if (
-                this.isRestoringInitialView &&
-                this.restoreTargetPageNum === task.pageNumber
-              ) {
-                this.finishInitialRestore();
-              }
             });
           } else {
             // Clean up bitmap if aborted
@@ -1282,14 +1262,6 @@ export class PdfReaderStore {
           if (!task.abortSignal.aborted) {
             runInAction(() => {
               this.attachCanvas(task.pageNumber, canvas);
-
-              // Check if this is the page we were waiting for during initial restoration
-              if (
-                this.isRestoringInitialView &&
-                this.restoreTargetPageNum === task.pageNumber
-              ) {
-                this.finishInitialRestore();
-              }
             });
           }
         }
@@ -1338,14 +1310,6 @@ export class PdfReaderStore {
       // Store bitmap and update state
       runInAction(() => {
         this.storeBitmap(task.pageNumber, bitmap);
-
-        // Check if this is the page we were waiting for during initial restoration
-        if (
-          this.isRestoringInitialView &&
-          this.restoreTargetPageNum === task.pageNumber
-        ) {
-          this.finishInitialRestore();
-        }
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

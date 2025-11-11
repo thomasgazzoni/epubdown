@@ -234,12 +234,20 @@ export const PdfViewer = observer(({ store }: PdfViewerProps) => {
   // Calculate current position within the current page (0.0 = top, 1.0 = bottom)
   // Note: Read store.currentPage inside the callback to avoid re-creating on every page change
   const calculateCurrentPosition = useCallback((): number => {
-    if (!containerRef.current) return 0;
+    if (!containerRef.current) {
+      console.log("[PdfViewer] calculateCurrentPosition: no containerRef");
+      return 0;
+    }
 
     const pageNum = store.currentPage; // Read at call time from closure
     const container = containerRef.current;
     const slot = slotRefs.current[pageNum - 1]; // Convert to 0-based index for array
-    if (!slot) return 0;
+    if (!slot) {
+      console.log(
+        `[PdfViewer] calculateCurrentPosition: no slot for page ${pageNum}`,
+      );
+      return 0;
+    }
 
     // Use offsetTop to avoid layout thrashing from getBoundingClientRect
     const top = slot.offsetTop - container.scrollTop;
@@ -247,7 +255,11 @@ export const PdfViewer = observer(({ store }: PdfViewerProps) => {
     const h = slot.offsetHeight || 1;
 
     // Return as ratio, clamped to [0, 1]
-    return Math.max(0, Math.min(1, offset / h));
+    const position = Math.max(0, Math.min(1, offset / h));
+    console.log(
+      `[PdfViewer] calculateCurrentPosition: page=${pageNum}, top=${top.toFixed(1)}, offset=${offset.toFixed(1)}, h=${h.toFixed(1)}, position=${position.toFixed(3)}`,
+    );
+    return position;
   }, [store]); // Removed store.currentPage from deps for stable callback
 
   // Get current content width directly from DOM
@@ -342,7 +354,7 @@ export const PdfViewer = observer(({ store }: PdfViewerProps) => {
 
       const slot = slotRefs.current[page - 1];
       if (slot && containerRef.current) {
-        performProgrammaticScroll(slot, "smooth");
+        performProgrammaticScroll(slot);
       }
     },
   });
@@ -536,6 +548,9 @@ export const PdfViewer = observer(({ store }: PdfViewerProps) => {
           restoreScrollPosition(pageNum, position);
           store.finishInitialRestore();
         });
+        setTimeout(() => {
+          store.finishInitialRestore();
+        }, 200);
       });
     });
   }, [
@@ -570,7 +585,9 @@ export const PdfViewer = observer(({ store }: PdfViewerProps) => {
 
     const { pageNum, position } = store.pendingScrollRestore;
     console.log(
-      `[PdfViewer] Zoom scroll restore: page ${pageNum}, position ${position.toFixed(3)}`,
+      `[PdfViewer] Zoom scroll restore: page ${pageNum}, position ${position.toFixed(
+        3,
+      )}`,
     );
     lastPendingRestoreRef.current = store.pendingScrollRestore;
 

@@ -1,7 +1,7 @@
 import type { PageData } from "@epubdown/pdf-render";
 import { observer } from "mobx-react-lite";
 import type React from "react";
-import { memo, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { PdfReaderStore } from "../stores/PdfReaderStore";
 
 /**
@@ -293,9 +293,9 @@ const PageSlotComponent = observer(
 );
 
 /**
- * Memoized PageSlot to prevent re-renders when props haven't changed.
- * This is critical for scroll performance - without memo, PageSlot re-renders
- * every time PageSlotWrapper re-renders (due to MobX reactivity), even if
- * the bitmap/canvas refs are the same.
+ * Export PageSlotComponent as PageSlot.
+ * Note: We don't wrap in memo() because observer() components are already
+ * efficient and memo() would block MobX reactivity when observable properties
+ * change (since the pageData object reference stays the same).
  */
-export const PageSlot = memo(PageSlotComponent);
+export const PageSlot = PageSlotComponent;

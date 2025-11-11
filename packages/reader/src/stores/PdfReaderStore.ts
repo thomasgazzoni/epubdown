@@ -1041,10 +1041,14 @@ export class PdfReaderStore {
       return;
     }
 
-    // Skip rendering if page already has a fresh bitmap
+    // Skip rendering ONLY if page has a fresh bitmap at current zoom
+    // IMPORTANT: Pages marked "stale" need re-rendering (zoom changed)
+    // Note: status can be "rendered", "stale", "rendering", etc.
+    // We only skip if status is exactly "rendered" (not "stale")
     const pageData = this.docState.getPageData(task.pageNumber);
-    if (pageData && pageData.hasFull && pageData.status === "rendered") {
-      // Page already rendered at current PPI, no need to re-render
+    if (pageData?.hasFull && pageData.status === "rendered") {
+      // Page already rendered at current zoom level, skip re-render
+      // (status "stale" will NOT match this check and will proceed to render)
       return;
     }
 

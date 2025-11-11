@@ -1356,8 +1356,13 @@ export class PdfReaderStore {
 
   /**
    * Zoom in to next level
+   * @param containerWidth Optional container width (falls back to lastContainerWidth)
    */
-  zoomIn(currentPosition: number, zoomLevels: number[]) {
+  zoomIn(
+    currentPosition: number,
+    zoomLevels: number[],
+    containerWidth?: number,
+  ) {
     this.setPendingScrollRestore(this.currentPage, currentPosition);
 
     // Find current zoom level
@@ -1375,14 +1380,19 @@ export class PdfReaderStore {
     const newZoom = zoomLevels[newIndex];
 
     if (newZoom && Math.abs(newZoom - this.zoomPercent) > 0.01) {
-      this.setZoomPercent(newZoom);
+      this.setZoomPercent(newZoom, containerWidth);
     }
   }
 
   /**
    * Zoom out to previous level
+   * @param containerWidth Optional container width (falls back to lastContainerWidth)
    */
-  zoomOut(currentPosition: number, zoomLevels: number[]) {
+  zoomOut(
+    currentPosition: number,
+    zoomLevels: number[],
+    containerWidth?: number,
+  ) {
     this.setPendingScrollRestore(this.currentPage, currentPosition);
 
     // Find current zoom level
@@ -1399,28 +1409,30 @@ export class PdfReaderStore {
     const newZoom = zoomLevels[newIndex];
 
     if (newZoom && Math.abs(newZoom - this.zoomPercent) > 0.01) {
-      this.setZoomPercent(newZoom);
+      this.setZoomPercent(newZoom, containerWidth);
     }
   }
 
   /**
    * Reset zoom to 100% (fit to container width)
+   * @param containerWidth Optional container width (falls back to lastContainerWidth)
    */
-  resetZoom(currentPosition: number) {
+  resetZoom(currentPosition: number, containerWidth?: number) {
     this.setPendingScrollRestore(this.currentPage, currentPosition);
     if (Math.abs(this.zoomPercent - 1.0) > 0.01) {
-      this.setZoomPercent(1.0);
+      this.setZoomPercent(1.0, containerWidth);
     }
   }
 
   /**
    * Fit current page to container width (same as 100% in viewport mode)
+   * @param containerWidth Optional container width (falls back to lastContainerWidth)
    */
-  fitToWidth(currentPosition: number) {
+  fitToWidth(currentPosition: number, containerWidth?: number) {
     this.setPendingScrollRestore(this.currentPage, currentPosition);
     // In viewport mode, fit = 100% = 1.0
     if (Math.abs(this.zoomPercent - 1.0) > 0.01) {
-      this.setZoomPercent(1.0);
+      this.setZoomPercent(1.0, containerWidth);
     }
   }
 
@@ -1443,15 +1455,19 @@ export class PdfReaderStore {
   /**
    * Set zoom percent and apply viewport zoom
    * @param zoomPercent Zoom fraction (1.0 = 100%, 0.75 = 75%, etc.)
+   * @param containerWidth Optional container width (falls back to lastContainerWidth)
    */
-  setZoomPercent(zoomPercent: number) {
+  setZoomPercent(zoomPercent: number, containerWidth?: number) {
     if (Math.abs(zoomPercent - this.zoomPercent) < 0.01) return;
     this.zoomPercent = zoomPercent;
 
+    // Use provided width or fall back to last known width
+    const width = containerWidth ?? this.lastContainerWidth;
+
     // Apply viewport zoom if we have container width
-    if (this.lastContainerWidth > 0) {
+    if (width > 0) {
       // 1) Recompute CSS/pixel sizes (also marks pages stale inside PdfState)
-      this.applyViewportZoom(this.lastContainerWidth);
+      this.applyViewportZoom(width);
 
       // 2) Explicitly invalidate visible window to force re-render
       this.invalidateCurrentWindow();

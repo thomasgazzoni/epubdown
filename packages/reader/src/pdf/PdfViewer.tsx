@@ -43,13 +43,14 @@ const PageSliderObserver: FC<{
 const ZoomControlsObserver: FC<{
   store: PdfReaderStore;
   calculateCurrentPosition: () => number;
-}> = observer(({ store, calculateCurrentPosition }) => {
+  contentWidth: number;
+}> = observer(({ store, calculateCurrentPosition, contentWidth }) => {
   return (
     <div className="fixed bottom-4 left-4 z-10 bg-white rounded-lg shadow px-2 py-2 flex items-center gap-2">
       <button
         onClick={() => {
           const position = calculateCurrentPosition();
-          store.zoomOut(position, ZOOM_PERCENT_LEVELS);
+          store.zoomOut(position, ZOOM_PERCENT_LEVELS, contentWidth);
         }}
         disabled={!store.canZoomOut(ZOOM_PERCENT_LEVELS)}
         className="px-3 py-1 rounded text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-100"
@@ -64,7 +65,7 @@ const ZoomControlsObserver: FC<{
       <button
         onClick={() => {
           const position = calculateCurrentPosition();
-          store.zoomIn(position, ZOOM_PERCENT_LEVELS);
+          store.zoomIn(position, ZOOM_PERCENT_LEVELS, contentWidth);
         }}
         disabled={!store.canZoomIn(ZOOM_PERCENT_LEVELS)}
         className="px-3 py-1 rounded text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-100"
@@ -75,7 +76,7 @@ const ZoomControlsObserver: FC<{
       <button
         onClick={() => {
           const position = calculateCurrentPosition();
-          store.fitToWidth(position);
+          store.fitToWidth(position, contentWidth);
         }}
         className="ml-1 px-2 py-1 rounded text-xs font-medium hover:bg-gray-100"
         title="Fit page width to container"
@@ -86,7 +87,7 @@ const ZoomControlsObserver: FC<{
       <button
         onClick={() => {
           const position = calculateCurrentPosition();
-          store.resetZoom(position);
+          store.resetZoom(position, contentWidth);
         }}
         className="px-2 py-1 rounded text-xs font-medium hover:bg-gray-100"
         title="Reset to 100%"
@@ -624,6 +625,7 @@ export const PdfViewer = observer(({ store }: PdfViewerProps) => {
         <ZoomControlsObserver
           store={store}
           calculateCurrentPosition={calculateCurrentPosition}
+          contentWidth={contentWidth}
         />
       )}
 

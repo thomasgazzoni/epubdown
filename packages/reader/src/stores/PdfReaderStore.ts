@@ -26,6 +26,152 @@ import type { BookLibraryStore } from "./BookLibraryStore";
 export type { PageStatus, PageData, TocNode };
 
 /**
+ * Restoration phase state machine
+ * - idle: No restoration in progress
+ * - initializing: Waiting for PDF to load and page sizes
+ * - ready: PDF loaded, ready to scroll
+ * - scrolling: Scroll has been initiated
+ * - complete: Restoration finished, normal operation
+ */
+type RestorationPhase =
+  | "idle"
+  | "initializing"
+  | "ready"
+  | "scrolling"
+  | "complete";
+
+/**
+ * Controller for managing initial page restoration from URL
+ * Uses explicit state machine to avoid timing issues
+ */
+class RestorationController {
+  phase: RestorationPhase = "idle";
+  targetPage: number | null = null;
+  targetPosition: number = 0;
+  targetZoom: number | null = null;
+  private safetyTimer: number | null = null;
+
+  constructor() {
+    makeAutoObservable(this, {}, { autoBind: true });
+  }
+
+  /**
+   * Start restoration process
+   */
+  start(page: number, position: number, zoom?: number) {
+    // Guard against double-initialization
+    if (this.phase !== "idle" && this.phase !== "complete") {
+      console.log(
+        "[RestorationController] Already restoring, ignoring duplicate start",
+      );
+      return;
+    }
+
+    console.log("[RestorationController] Starting restoration", {
+      page,
+      position,
+      zoom,
+    });
+    this.phase = "initializing";
+    this.targetPage = page;
+    this.targetPosition = position;
+    this.targetZoom = zoom ?? null;
+
+    // Clear any existing safety timer
+    this.clearSafetyTimer();
+  }
+
+  /**
+   * Mark as ready to scroll (PDF loaded, sizes available)
+   */
+  markReady() {
+    if (this.phase === "initializing") {
+      console.log("[RestorationController] Ready to scroll");
+      this.phase = "ready";
+
+      // Set safety timeout to complete restoration if scroll never happens
+      this.setSafetyTimer(() => this.complete(), 3000);
+    }
+  }
+
+  /**
+   * Mark scroll as initiated
+   */
+  markScrolling() {
+    if (this.phase === "ready") {
+      console.log("[RestorationController] Scrolling initiated");
+      this.phase = "scrolling";
+      this.clearSafetyTimer();
+
+      // Set shorter timeout to complete after scroll
+      this.setSafetyTimer(() => this.complete(), 300);
+    }
+  }
+
+  /**
+   * Complete restoration
+   */
+  complete() {
+    console.log("[RestorationController] Restoration complete");
+    this.clearSafetyTimer();
+    this.phase = "complete";
+    this.targetPage = null;
+    this.targetPosition = 0;
+    this.targetZoom = null;
+  }
+
+  /**
+   * Reset to idle state
+   */
+  reset() {
+    this.clearSafetyTimer();
+    this.phase = "idle";
+    this.targetPage = null;
+    this.targetPosition = 0;
+    this.targetZoom = null;
+  }
+
+  /**
+   * Set safety timer
+   */
+  private setSafetyTimer(callback: () => void, ms: number) {
+    this.clearSafetyTimer();
+    this.safetyTimer = window.setTimeout(callback, ms);
+  }
+
+  /**
+   * Clear safety timer
+   */
+  private clearSafetyTimer() {
+    if (this.safetyTimer !== null) {
+      clearTimeout(this.safetyTimer);
+      this.safetyTimer = null;
+    }
+  }
+
+  /**
+   * Should block position updates during restoration
+   */
+  get shouldBlockUpdates(): boolean {
+    return this.phase !== "idle" && this.phase !== "complete";
+  }
+
+  /**
+   * Is restoration in progress
+   */
+  get isRestoring(): boolean {
+    return this.phase !== "idle" && this.phase !== "complete";
+  }
+
+  /**
+   * Should show loading overlay
+   */
+  get shouldShowOverlay(): boolean {
+    return this.phase === "initializing" || this.phase === "ready";
+  }
+}
+
+/**
  * ARCHITECTURE: PDF Reader Store
  *
  * This is the central MobX store for PDF viewing functionality. It manages:
@@ -170,16 +316,20 @@ export class PdfReaderStore {
   // ═══════════════════════════════════════════════════════════════
   // INITIAL VIEW RESTORATION STATE
   // ═══════════════════════════════════════════════════════════════
-  // isRestoringInitialView: True while waiting for initial page to render
-  // Controls loading overlay in PdfViewer component
-  isRestoringInitialView = false;
-  // restoreTargetPageNum: Which page we're waiting for (1-based)
-  // When this page renders, restoration completes
-  restoreTargetPageNum: number | null = null;
-  // restoreTargetPosition: Scroll position within target page (0.0-1.0)
-  restoreTargetPosition = 0;
-  // restoreTimer: Safety timeout to unblock UI if page never renders
-  private restoreTimer: number | null = null;
+  // restoration: State machine for managing initial page restoration from URL
+  // Replaces old isRestoringInitialView/restoreTargetPageNum/restoreTargetPosition flags
+  restoration = new RestorationController();
+
+  // Legacy compatibility getters (will be removed)
+  get isRestoringInitialView(): boolean {
+    return this.restoration.shouldShowOverlay;
+  }
+  get restoreTargetPageNum(): number | null {
+    return this.restoration.targetPage;
+  }
+  get restoreTargetPosition(): number {
+    return this.restoration.targetPosition;
+  }
 
   // ═══════════════════════════════════════════════════════════════
   // TABLE OF CONTENTS STATE
@@ -395,9 +545,8 @@ export class PdfReaderStore {
     // Set up restoration if page > 1 or position > 0
     if (page > 1 || position > 0) {
       runInAction(() => {
-        this.isRestoringInitialView = true;
-        this.restoreTargetPageNum = page;
-        this.restoreTargetPosition = position;
+        // Start restoration using state machine
+        this.restoration.start(page, position, zoom > 0 ? zoom : undefined);
         this.preventUrlWrite = true;
         this.currentPage = page;
         // Restore zoom if specified
@@ -427,9 +576,9 @@ export class PdfReaderStore {
       });
 
       // Set up pending scroll restore if we're restoring initial view
-      if (this.isRestoringInitialView && this.restoreTargetPageNum) {
-        const targetPageNum = this.restoreTargetPageNum;
-        const targetPosition = this.restoreTargetPosition;
+      if (this.restoration.targetPage) {
+        const targetPageNum = this.restoration.targetPage;
+        const targetPosition = this.restoration.targetPosition;
         runInAction(() => {
           this.pendingScrollRestore = {
             pageNum: targetPageNum,
@@ -437,14 +586,8 @@ export class PdfReaderStore {
           };
         });
 
-        // Set safety timeout to unblock UI if page never renders
-        if (this.restoreTimer !== null) {
-          clearTimeout(this.restoreTimer);
-        }
-        this.restoreTimer = window.setTimeout(() => {
-          console.warn("[PdfReaderStore] Restoration timeout - unblocking UI");
-          this.finishInitialRestore();
-        }, 2000);
+        // Mark restoration as ready (PDF loaded, sizes will load next)
+        this.restoration.markReady();
       }
 
       // Update document title after TOC is loaded
@@ -454,7 +597,7 @@ export class PdfReaderStore {
       runInAction(() => {
         this.error = message;
         this.isLoading = false;
-        this.isRestoringInitialView = false;
+        this.restoration.reset();
         this.preventUrlWrite = false;
       });
     }
@@ -1658,12 +1801,7 @@ export class PdfReaderStore {
    * Called by render-completion callback or by timeout
    */
   finishInitialRestore() {
-    this.isRestoringInitialView = false;
-    this.restoreTargetPageNum = null;
-    if (this.restoreTimer !== null) {
-      clearTimeout(this.restoreTimer);
-      this.restoreTimer = null;
-    }
+    this.restoration.complete();
     // Re-enable URL writes now that restoration is complete
     this.preventUrlWrite = false;
   }
@@ -1736,10 +1874,7 @@ export class PdfReaderStore {
   }
 
   dispose() {
-    if (this.restoreTimer !== null) {
-      window.clearTimeout(this.restoreTimer);
-      this.restoreTimer = null;
-    }
+    this.restoration.reset();
     this.disposeDocument();
     runInAction(() => {
       this.pdfBytes = null;

@@ -455,8 +455,17 @@ export const PdfViewer = observer(({ store }: PdfViewerProps) => {
 
     // Update position immediately on scroll (no RAF delay)
     const updatePosition = () => {
+      console.log(
+        "[PdfViewer] updatePosition called",
+        store.currentPage,
+        store.restoration.phase,
+      );
+
       // Don't update position/URL until initial restoration is complete
-      if (store.isRestoringInitialView) return;
+      if (store.restoration.shouldBlockUpdates) {
+        console.log("[PdfViewer] Blocking position update during restoration");
+        return;
+      }
 
       const position = calculateCurrentPosition();
       store.setPosition(position);
@@ -524,7 +533,12 @@ export const PdfViewer = observer(({ store }: PdfViewerProps) => {
       else if ((mq as any)?.removeListener)
         (mq as any).removeListener(mqListener);
     };
-  }, [store, calculateCurrentPosition, store.pageCount]);
+  }, [
+    store,
+    calculateCurrentPosition,
+    store.pageCount,
+    store.restoration.phase,
+  ]);
 
   // ═══════════════════════════════════════════════════════════════
   // INITIAL PAGE RESTORATION FROM URL
@@ -548,17 +562,19 @@ export const PdfViewer = observer(({ store }: PdfViewerProps) => {
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
         withProgrammaticScroll(() => {
+          console.log("[PdfViewer] Restoring scroll position", {
+            pageNum,
+            position,
+          });
           restoreScrollPosition(pageNum, position);
+
+          // Mark scrolling in restoration state machine
+          store.restoration.markScrolling();
         });
 
         // Trigger render after scroll restoration (important for pages to show up)
         requestAnimationFrame(() => {
           store.onScroll();
-
-          // Finish restore after a short delay to allow initial render to complete
-          setTimeout(() => {
-            store.finishInitialRestore();
-          }, 200);
         });
       });
     });

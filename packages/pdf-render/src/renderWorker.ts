@@ -328,5 +328,3 @@ function handleHeartbeat(): void {
   self.postMessage(response);
   wlog("Heartbeat pong sent");
 }
-
-export {};

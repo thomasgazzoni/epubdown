@@ -53,7 +53,7 @@ export class RenderWorkerManager {
 
   // Heartbeat state
   private heartbeatIntervalId: number | null = null;
-  private lastHeartbeatResponse: number = 0;
+  private lastHeartbeatResponse = 0;
   private _isWorkerResponsive = true;
 
   /**

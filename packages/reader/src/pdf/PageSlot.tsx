@@ -1,29 +1,19 @@
-import { observer } from "mobx-react-lite";
-import React, { useEffect, useRef, useState, memo } from "react";
 import type { PageData } from "@epubdown/pdf-render";
+import { observer } from "mobx-react-lite";
+import type React from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import type { PdfReaderStore } from "../stores/PdfReaderStore";
-
-/**
- * Feature flag for bitmaprenderer optimization
- * When true, uses bitmaprenderer context for zero-copy bitmap transfer
- * When false, uses 2D context with drawImage (safer, no flashing)
- *
- * NOTE: Currently disabled because transferFromImageBitmap detaches the bitmap,
- * which conflicts with our long-lived bitmap caching strategy. To enable this,
- * we would need to remove bitmaps from cache after transfer and re-render on demand.
- */
-const USE_BITMAP_RENDERER = false;
 
 /**
  * Canvas/Bitmap display component with efficient rendering
  *
  * This component handles displaying ImageBitmaps or HTMLCanvasElements:
- * - ImageBitmap: Uses bitmaprenderer context for zero-copy transfer
+ * - ImageBitmap: Uses 2D context drawImage to copy pixel data to canvas
  * - HTMLCanvasElement: Reparents the canvas (fallback for engines)
  * - null: Shows loading placeholder
  *
- * The bitmaprenderer approach is more efficient than 2D context drawing
- * because it transfers ownership without copying pixel data.
+ * We use drawImage instead of transferFromImageBitmap to preserve cached bitmaps
+ * for reuse when navigating back and forth between pages.
  */
 const CanvasHost: React.FC<{
   bitmap: ImageBitmap | null;
@@ -49,7 +39,7 @@ const CanvasHost: React.FC<{
 
     // Check if bitmap/canvas actually changed (not just re-rendered)
     // This prevents loading overlay from flashing when PageSlotWrapper re-renders
-    // with the same cached bitmap (e.g., during scroll when hasThumb/hasFull updates)
+    // with the same cached bitmap (e.g., during scroll when hasFull updates)
     const bitmapChanged = bitmap !== prevBitmapRef.current;
     const canvasChanged = canvas !== prevCanvasRef.current;
     prevBitmapRef.current = bitmap;
@@ -73,7 +63,7 @@ const CanvasHost: React.FC<{
       onMounted?.();
     };
 
-    // Priority 1: Bitmap via bitmaprenderer (most efficient)
+    // Priority 1: Bitmap via 2D context drawImage
     if (bitmap) {
       // Create or reuse bitmap canvas
       if (!bitmapCanvasRef.current) {
@@ -86,40 +76,33 @@ const CanvasHost: React.FC<{
 
       const bmCanvas = bitmapCanvasRef.current;
 
-      // Only update canvas dimensions if they've changed (setting width/height clears canvas)
-      if (
-        bmCanvas.width !== bitmap.width ||
-        bmCanvas.height !== bitmap.height
-      ) {
-        bmCanvas.width = bitmap.width;
-        bmCanvas.height = bitmap.height;
+      // Get device pixel ratio for HiDPI rendering
+      const dpr = window.devicePixelRatio || 1;
+
+      // Always size the *backing store* to device pixels,
+      // and the *CSS size* to layout pixels for crisp rendering
+      const targetW = Math.max(1, Math.round(width * dpr));
+      const targetH = Math.max(1, Math.round(height * dpr));
+
+      if (bmCanvas.width !== targetW || bmCanvas.height !== targetH) {
+        bmCanvas.width = targetW;
+        bmCanvas.height = targetH;
+        bmCanvas.style.width = `${width}px`;
+        bmCanvas.style.height = `${height}px`;
       }
 
-      // Use bitmaprenderer for zero-copy transfer when enabled
-      if (USE_BITMAP_RENDERER) {
-        const ctx = bmCanvas.getContext(
-          "bitmaprenderer",
-        ) as ImageBitmapRenderingContext | null;
-        if (ctx) {
-          // Transfer bitmap ownership to canvas (zero-copy)
-          // Note: This detaches the bitmap, so we must NOT reuse it
-          ctx.transferFromImageBitmap(bitmap);
-          // Bitmap is now owned by canvas, no need to close it here
-        } else {
-          // Fallback: Use 2D context to draw bitmap (copy pixels)
-          const ctx2d = bmCanvas.getContext("2d");
-          if (ctx2d) {
-            ctx2d.clearRect(0, 0, bmCanvas.width, bmCanvas.height);
-            ctx2d.drawImage(bitmap, 0, 0);
-          }
-        }
-      } else {
-        // Default: Use 2D context to draw bitmap (copy pixels)
-        const ctx2d = bmCanvas.getContext("2d");
-        if (ctx2d) {
-          ctx2d.clearRect(0, 0, bmCanvas.width, bmCanvas.height);
-          ctx2d.drawImage(bitmap, 0, 0);
-        }
+      // Update canvas content when bitmap changes or size changes
+      const ctx2d = bmCanvas.getContext("2d");
+      if (ctx2d && bitmapChanged) {
+        ctx2d.imageSmoothingEnabled = true; // default; keep text crisp
+        ctx2d.clearRect(0, 0, targetW, targetH);
+        // Draw bitmap scaled to device pixels for crisp rendering
+        // Note: We use drawImage instead of transferFromImageBitmap because
+        // transferFromImageBitmap detaches the bitmap, making it unusable for
+        // caching. When navigating back and forth, components may unmount/remount
+        // and try to reuse already-detached bitmaps from cache. drawImage copies
+        // the pixel data, leaving the cached bitmap intact for reuse.
+        ctx2d.drawImage(bitmap, 0, 0, targetW, targetH);
       }
 
       // Only show loading overlay if bitmap actually changed
@@ -178,7 +161,7 @@ const CanvasHost: React.FC<{
     setIsContentReady(true); // Placeholder is immediately ready
     mount(placeholderRef.current);
     currentCanvasRef.current = null;
-  }, [bitmap, canvas]);
+  }, [bitmap, canvas, width, height]);
 
   return (
     <div
@@ -220,11 +203,10 @@ export const PageSlotWrapper = observer(
   }) => {
     // Access observable flags to create MobX dependencies
     // This causes this wrapper to re-render when bitmaps become available
-    void pageData.hasThumb;
     void pageData.hasFull;
 
     // Fetch bitmap and canvas from store (these Maps are non-observable)
-    // But since this component re-renders when hasThumb/hasFull change,
+    // But since this component re-renders when hasFull changes,
     // we'll fetch the updated bitmap/canvas values
     const bitmap = store.getBitmapForPage(pageData.pageNumber);
     const canvas = store.getPageCanvas(pageData.pageNumber);

@@ -35,7 +35,6 @@ export interface PageData {
   renderEndTs?: number;
   renderDurationMs?: number;
   // Bitmap tracking
-  hasThumb?: boolean; // Has low-res persistent bitmap
   hasFull?: boolean; // Has full-res bitmap at current PPI
 }
 
@@ -84,9 +83,9 @@ export class PdfStateStore {
 
   setDevicePixelRatio(dpr: number) {
     this.devicePixelRatio = dpr;
-    // Recalculate CSS dimensions for all pages
+    // DPR now affects *pixel* dims; recompute both pixel & CSS sizes
     for (const page of this.pages.values()) {
-      this.updateCssDimensions(page);
+      this.updatePixelDimensions(page);
     }
     // Mark all full bitmaps as stale for crisp re-render on display change
     this.markAllFullBitmapsStale();
@@ -94,8 +93,19 @@ export class PdfStateStore {
 
   private updatePixelDimensions(page: PageData) {
     if (page.wPt && page.hPt) {
-      page.wPx = Math.max(1, Math.floor((page.wPt * this.ppi) / 72));
-      page.hPx = Math.max(1, Math.floor((page.hPt * this.ppi) / 72));
+      // Compute backing pixels with DPR-aware PPI for HiDPI displays
+      const renderPpi = this.ppi * this.devicePixelRatio;
+      page.wPx = Math.max(1, Math.floor((page.wPt * renderPpi) / 72));
+      page.hPx = Math.max(1, Math.floor((page.hPt * renderPpi) / 72));
+
+      // Optional clamp to stay under GPU limits (prevents forced downscale)
+      const MAX_SIDE = 16384;
+      const s = Math.min(1, MAX_SIDE / page.wPx, MAX_SIDE / page.hPx);
+      if (s < 1) {
+        page.wPx = Math.floor(page.wPx * s);
+        page.hPx = Math.floor(page.hPx * s);
+      }
+
       this.updateCssDimensions(page);
     }
   }
@@ -148,14 +158,6 @@ export class PdfStateStore {
     if (page.renderStartTs) {
       page.renderDurationMs = page.renderEndTs - page.renderStartTs;
     }
-  }
-
-  /**
-   * Mark page as having thumb bitmap
-   */
-  setPageHasThumb(pageNum: number, hasThumb: boolean) {
-    const page = this.getOrCreatePage(pageNum);
-    page.hasThumb = hasThumb;
   }
 
   /**

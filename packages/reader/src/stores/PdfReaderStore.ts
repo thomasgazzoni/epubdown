@@ -1,27 +1,27 @@
-import { makeAutoObservable, reaction, runInAction } from "mobx";
 import { DEFAULT_PDFIUM_WASM_URL } from "@embedpdf/pdfium";
-import type { AppEventSystem } from "../app/context";
-import type { BookLibraryStore } from "./BookLibraryStore";
 import {
-  createPdfiumEngine,
-  createPdfjsEngine,
   type DocumentHandle,
   type PDFEngine,
-  type RendererKind,
-  type PageStatus,
   type PageData,
+  type PageStatus,
   PdfStateStore,
   PdfTocStore,
-  type TocNode,
   RenderQueue,
   RenderScheduler,
-  mergeRenderQueueConfig,
   type RenderTask,
   RenderWorkerManager,
+  type RendererKind,
+  type TocNode,
   canUseOffscreenPipeline,
+  createPdfiumEngine,
+  createPdfjsEngine,
   logOffscreenCapabilities,
+  mergeRenderQueueConfig,
 } from "@epubdown/pdf-render";
+import { makeAutoObservable, reaction, runInAction } from "mobx";
+import type { AppEventSystem } from "../app/context";
 import type { PdfPageSizeCache } from "../lib/PdfPageSizeCache";
+import type { BookLibraryStore } from "./BookLibraryStore";
 
 export type { PageStatus, PageData, TocNode };
 
@@ -99,7 +99,7 @@ export class PdfReaderStore {
   // Current page number (1-based), fully observable for MobX reactivity
   currentPage = 1;
   // PPI (pixels per inch) - user zoom level
-  ppi = 144;
+  ppi = 96;
   // Zoom mode: manual or fit-to-width
   zoomMode: "manual" | "fit" = "manual";
   //
@@ -126,7 +126,6 @@ export class PdfReaderStore {
   private useWorker = false; // Feature flag for Worker rendering
 
   // Bitmap storage (keys are 1-based page numbers)
-  private thumbs = new Map<number, ImageBitmap>(); // Low-res, persistent
   private bitmaps = new Map<number, ImageBitmap>(); // Full-res at current PPI
   private canvases = new Map<number, HTMLCanvasElement>(); // Fallback only
   private memoryBytes = 0;
@@ -135,6 +134,9 @@ export class PdfReaderStore {
   private debug = false;
   // Performance tracking
   private renderCallCount = 0;
+  // Average full render duration tracking (rolling window)
+  private renderDurations: number[] = [];
+  private readonly MAX_RENDER_SAMPLES = 10;
   // Generation token for canceling stale tasks
   private taskGen = 0;
   // Scroll velocity tracking for adaptive quality
@@ -202,8 +204,7 @@ export class PdfReaderStore {
         currentPosition: false,
         // Bitmap/canvas storage Maps are non-observable to prevent re-renders
         // when storing bitmaps for other pages. Reactivity is triggered through
-        // pageData.hasThumb/hasFull flags instead.
-        thumbs: false,
+        // pageData.hasFull flag instead.
         bitmaps: false,
         canvases: false,
         memoryBytes: false,
@@ -228,7 +229,6 @@ export class PdfReaderStore {
    */
   private readonly MAX_SIDE_PX = 4096; // cap each side
   private readonly MAX_AREA_PX = 16_000_000; // cap total pixels (~4Kx4K)
-  private readonly THUMB_PPI = 72; // Low-res thumb quality
 
   /**
    * Clamp PPI to prevent huge bitmaps that blow memory budget
@@ -253,33 +253,33 @@ export class PdfReaderStore {
   }
 
   /**
-   * Determine if we're in fast scroll mode
-   * Fast scroll means: render thumbs only, upgrade to full when idle
+   * Track render duration for performance metrics
    */
-  private isFastScrolling(): boolean {
-    // Consider "fast" if velocity > 5 pages/second
-    return this.scrollVelocity > 5;
+  private recordRenderDuration(durationMs: number) {
+    this.renderDurations.push(durationMs);
+    if (this.renderDurations.length > this.MAX_RENDER_SAMPLES) {
+      this.renderDurations.shift();
+    }
   }
 
   /**
-   * Get effective PPI for rendering based on scroll mode
-   * @param pageNum Page number to render
-   * @param kind "thumb" or "full"
+   * Get average full render duration
    */
-  private getEffectivePpi(pageNum: number, kind: "thumb" | "full"): number {
-    if (kind === "thumb") {
-      return this.THUMB_PPI;
-    }
+  private getAvgFullRenderMs(): number {
+    if (this.renderDurations.length === 0) return 0;
+    const sum = this.renderDurations.reduce((a, b) => a + b, 0);
+    return sum / this.renderDurations.length;
+  }
 
+  /**
+   * Get effective PPI for rendering
+   * @param pageNum Page number to render
+   */
+  private getEffectivePpi(pageNum: number): number {
     // Get page dimensions
     const pageData = this.docState.getPageData(pageNum);
     if (!pageData?.wPt || !pageData?.hPt) {
       return this.ppi; // fallback
-    }
-
-    // If fast scrolling, use thumb PPI even for "full" requests
-    if (this.isFastScrolling()) {
-      return this.THUMB_PPI;
     }
 
     // Clamp requested PPI based on page size
@@ -315,13 +315,6 @@ export class PdfReaderStore {
    */
   get bitmapMemoryBytes(): number {
     return this.bitmapBytes;
-  }
-
-  /**
-   * Get number of thumb bitmaps
-   */
-  get thumbCount(): number {
-    return this.thumbs.size;
   }
 
   /**
@@ -628,7 +621,7 @@ export class PdfReaderStore {
   private async loadPageSizes(): Promise<void> {
     if (!this.currentBookId || this.pageCount === 0) return;
 
-    let maxPageWidth = 0;
+    const maxPageWidth = 0;
 
     // Try to load from cache
     const cachedSizes = await this.pageSizeCache.getPageSizes(
@@ -683,13 +676,12 @@ export class PdfReaderStore {
   // ═══════════════════════════════════════════════════════════════
 
   /**
-   * Get bitmap for a page (thumb or full, prefer full)
+   * Get bitmap for a page
    * @param pageNum 1-based page number
    * @returns ImageBitmap if available, null otherwise
    */
   getBitmapForPage(pageNum: number): ImageBitmap | null {
-    // Prefer full bitmap, fallback to thumb
-    return this.bitmaps.get(pageNum) ?? this.thumbs.get(pageNum) ?? null;
+    return this.bitmaps.get(pageNum) ?? null;
   }
 
   /**
@@ -698,14 +690,6 @@ export class PdfReaderStore {
    */
   getFullBitmap(pageNum: number): ImageBitmap | null {
     return this.bitmaps.get(pageNum) ?? null;
-  }
-
-  /**
-   * Get thumb bitmap for a page
-   * @param pageNum 1-based page number
-   */
-  getThumbBitmap(pageNum: number): ImageBitmap | null {
-    return this.thumbs.get(pageNum) ?? null;
   }
 
   /**
@@ -734,34 +718,24 @@ export class PdfReaderStore {
    * Store bitmap for a page
    * @param pageNum 1-based page number
    * @param bitmap ImageBitmap to store
-   * @param kind "thumb" or "full"
    */
-  private async storeBitmap(
-    pageNum: number,
-    bitmap: ImageBitmap,
-    kind: "thumb" | "full",
-  ) {
+  private async storeBitmap(pageNum: number, bitmap: ImageBitmap) {
     const size = this.getBitmapSize(bitmap);
     this.bitmapBytes += size;
 
-    if (kind === "thumb") {
-      // Close old thumb if exists
-      const oldThumb = this.thumbs.get(pageNum);
-      if (oldThumb) {
-        this.bitmapBytes -= this.getBitmapSize(oldThumb);
-        oldThumb.close();
-      }
-      this.thumbs.set(pageNum, bitmap);
-      this.docState.setPageHasThumb(pageNum, true);
-    } else {
-      // Close old full bitmap if exists
-      const oldBitmap = this.bitmaps.get(pageNum);
-      if (oldBitmap) {
-        this.bitmapBytes -= this.getBitmapSize(oldBitmap);
-        oldBitmap.close();
-      }
-      this.bitmaps.set(pageNum, bitmap);
-      this.docState.setPageHasFull(pageNum, true);
+    // Close old full bitmap if exists
+    const oldBitmap = this.bitmaps.get(pageNum);
+    if (oldBitmap) {
+      this.bitmapBytes -= this.getBitmapSize(oldBitmap);
+      oldBitmap.close();
+    }
+    this.bitmaps.set(pageNum, bitmap);
+    this.docState.setPageHasFull(pageNum, true);
+
+    // Record render duration for performance metrics
+    const pageData = this.docState.getPageData(pageNum);
+    if (pageData?.renderDurationMs) {
+      this.recordRenderDuration(pageData.renderDurationMs);
     }
 
     this.docState.setPageRendered(pageNum);
@@ -863,7 +837,6 @@ export class PdfReaderStore {
    * Eviction priority:
    * 1. Full bitmaps outside window (LRU)
    * 2. Full bitmaps inside window if still over budget (LRU)
-   * 3. Thumbs are NEVER evicted (they're small and provide instant fallback)
    */
   private enforceMemoryBudget() {
     const totalBytes = this.memoryBytes + this.bitmapBytes;
@@ -936,8 +909,6 @@ export class PdfReaderStore {
         }
       }
     }
-
-    // NEVER evict thumbs - they're small and provide instant fallback display
   }
 
   // ═══════════════════════════════════════════════════════════════
@@ -1029,8 +1000,8 @@ export class PdfReaderStore {
         return;
       }
 
-      // Use effective PPI (clamped based on page size and scroll mode)
-      const effectivePpi = this.getEffectivePpi(task.pageNumber, "full");
+      // Use effective PPI (clamped based on page size)
+      const effectivePpi = this.getEffectivePpi(task.pageNumber);
       await page.renderToCanvas(canvas, effectivePpi);
 
       if (!task.abortSignal.aborted) {
@@ -1040,12 +1011,9 @@ export class PdfReaderStore {
           const bitmap = await createImageBitmap(canvas);
 
           if (!task.abortSignal.aborted) {
-            // Determine if this is a thumb or full bitmap based on effective PPI
-            const kind = effectivePpi === this.THUMB_PPI ? "thumb" : "full";
-
             // Store bitmap and update state
             runInAction(() => {
-              this.storeBitmap(task.pageNumber, bitmap, kind);
+              this.storeBitmap(task.pageNumber, bitmap);
 
               // Check if this is the page we were waiting for during initial restoration
               if (
@@ -1105,8 +1073,8 @@ export class PdfReaderStore {
 
       const taskId = `${task.pageNumber}-${Date.now()}`;
 
-      // Use effective PPI (clamped based on page size and scroll mode)
-      const effectivePpi = this.getEffectivePpi(task.pageNumber, "full");
+      // Use effective PPI (clamped based on page size)
+      const effectivePpi = this.getEffectivePpi(task.pageNumber);
 
       // Request render from Worker (0-based page index)
       const bitmap = await this.workerManager.renderPage(
@@ -1121,12 +1089,9 @@ export class PdfReaderStore {
         return;
       }
 
-      // Determine if this is a thumb or full bitmap based on effective PPI
-      const kind = effectivePpi === this.THUMB_PPI ? "thumb" : "full";
-
       // Store bitmap and update state
       runInAction(() => {
-        this.storeBitmap(task.pageNumber, bitmap, kind);
+        this.storeBitmap(task.pageNumber, bitmap);
 
         // Check if this is the page we were waiting for during initial restoration
         if (
@@ -1676,6 +1641,23 @@ export class PdfReaderStore {
     this.engine = null;
     this.queue = null;
     this.scheduler = null;
+
+    // Clean up bitmaps - close all to free GPU memory promptly
+    for (const bitmap of this.bitmaps.values()) {
+      bitmap.close();
+    }
+    this.bitmaps.clear();
+
+    // Clean up canvases
+    for (const canvas of this.canvases.values()) {
+      canvas.width = 0;
+      canvas.height = 0;
+    }
+    this.canvases.clear();
+
+    // Reset memory tracking
+    this.memoryBytes = 0;
+    this.bitmapBytes = 0;
 
     // Clean up Worker if active
     if (this.workerManager) {

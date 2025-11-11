@@ -361,13 +361,19 @@ export class PdfReaderStore {
       () => this.updateDocumentTitle(),
     );
 
-    // Set up reaction to clear preventUrlWrite when restoration completes
+    // Set up reaction to clear preventUrlWrite when restoration completes or resets
     reaction(
       () => this.restoration.phase,
       (phase) => {
         if (phase === "complete") {
           console.log(
             "[PdfReaderStore] Restoration complete, enabling URL writes",
+          );
+          this.preventUrlWrite = false;
+        } else if (phase === "idle") {
+          // Also clear when restoration resets (e.g., when load() is called again)
+          console.log(
+            "[PdfReaderStore] Restoration reset to idle, enabling URL writes",
           );
           this.preventUrlWrite = false;
         }
@@ -543,11 +549,16 @@ export class PdfReaderStore {
     const position = Number(url.searchParams.get("position")) || 0;
     const zoom = Number(url.searchParams.get("zoom")) || 0;
 
+    console.log("[PdfReaderStore] parseUrlParams", { page, position, zoom });
+
     // Set up restoration if page > 1 or position > 0
     if (page > 1 || position > 0) {
       runInAction(() => {
         // Start restoration using state machine
         this.restoration.start(page, position, zoom > 0 ? zoom : undefined);
+        console.log(
+          "[PdfReaderStore] Starting restoration, preventUrlWrite=true",
+        );
         this.preventUrlWrite = true;
         this.currentPage = page;
         // Restore zoom if specified
@@ -1730,7 +1741,11 @@ export class PdfReaderStore {
     }
     // Don't write URL during initial restoration to prevent flickering
     if (this.preventUrlWrite) {
-      console.log("[PdfReaderStore] writeUrl: skipping (preventUrlWrite=true)");
+      console.log(
+        "[PdfReaderStore] writeUrl: skipping (preventUrlWrite=true, restoration.phase=" +
+          this.restoration.phase +
+          ")",
+      );
       return;
     }
 
@@ -1871,6 +1886,11 @@ export class PdfReaderStore {
   }
 
   dispose() {
+    console.log(
+      "[PdfReaderStore] dispose() called, resetting restoration (phase was: " +
+        this.restoration.phase +
+        ")",
+    );
     this.restoration.reset();
     this.disposeDocument();
     runInAction(() => {

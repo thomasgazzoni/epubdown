@@ -1,4 +1,4 @@
-import { makeAutoObservable } from "mobx";
+import { makeAutoObservable, observable } from "mobx";
 
 /**
  * Document-level state for PDF viewer
@@ -272,10 +272,17 @@ export class PdfStateStore {
   private getOrCreatePage(pageNum: number): PageData {
     let page = this.pages.get(pageNum);
     if (!page) {
-      page = {
-        pageNumber: pageNum,
-        status: "idle",
-      };
+      // Make the page record itself observable so wCss/hCss/wPx/hPx changes
+      // re-render observers that read them.
+      page = observable.object<PageData>(
+        {
+          pageNumber: pageNum,
+          status: "idle",
+          // keep remaining fields undefined initially
+        },
+        {},
+        { deep: false }, // flat object; own props are observable
+      );
       this.pages.set(pageNum, page);
     }
     return page;

@@ -5,7 +5,7 @@ import { ZOOM_PERCENT_LEVELS } from "./pdfConstants";
 interface UseKeyboardShortcutsOptions {
   store: PdfReaderStore;
   containerRef: RefObject<HTMLDivElement | null>;
-  calculateCurrentPosition: () => number;
+  calculateCurrentPositionWithPage: () => { pageNum: number; position: number };
   onNavigateToPage: (page: number) => void;
 }
 
@@ -29,7 +29,7 @@ interface UseKeyboardShortcutsOptions {
 export function useKeyboardShortcuts({
   store,
   containerRef,
-  calculateCurrentPosition,
+  calculateCurrentPositionWithPage,
   onNavigateToPage,
 }: UseKeyboardShortcutsOptions) {
   useEffect(() => {
@@ -49,7 +49,8 @@ export function useKeyboardShortcuts({
         case "=": {
           // Zoom in
           e.preventDefault();
-          const position = calculateCurrentPosition();
+          const { pageNum, position } = calculateCurrentPositionWithPage();
+          store.setPendingScrollRestore(pageNum, position);
           store.zoomIn(position, ZOOM_PERCENT_LEVELS);
           break;
         }
@@ -57,14 +58,16 @@ export function useKeyboardShortcuts({
         case "_": {
           // Zoom out
           e.preventDefault();
-          const position = calculateCurrentPosition();
+          const { pageNum, position } = calculateCurrentPositionWithPage();
+          store.setPendingScrollRestore(pageNum, position);
           store.zoomOut(position, ZOOM_PERCENT_LEVELS);
           break;
         }
         case "0": {
           // Reset to 100%
           e.preventDefault();
-          const position = calculateCurrentPosition();
+          const { pageNum, position } = calculateCurrentPositionWithPage();
+          store.setPendingScrollRestore(pageNum, position);
           store.resetZoom(position);
           break;
         }
@@ -72,7 +75,8 @@ export function useKeyboardShortcuts({
         case "F": {
           // Fit to width
           e.preventDefault();
-          const position = calculateCurrentPosition();
+          const { pageNum, position } = calculateCurrentPositionWithPage();
+          store.setPendingScrollRestore(pageNum, position);
           store.fitToWidth(position);
           break;
         }
@@ -124,5 +128,5 @@ export function useKeyboardShortcuts({
     return () => {
       container.removeEventListener("keydown", handleKeyDown);
     };
-  }, [store, containerRef, calculateCurrentPosition, onNavigateToPage]);
+  }, [store, containerRef, calculateCurrentPositionWithPage, onNavigateToPage]);
 }

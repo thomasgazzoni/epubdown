@@ -42,65 +42,71 @@ const PageSliderObserver: FC<{
  */
 const ZoomControlsObserver: FC<{
   store: PdfReaderStore;
-  calculateCurrentPosition: () => number;
+  calculateCurrentPositionWithPage: () => { pageNum: number; position: number };
   getContentWidth: () => number;
-}> = observer(({ store, calculateCurrentPosition, getContentWidth }) => {
-  return (
-    <div className="fixed bottom-4 left-4 z-10 bg-white rounded-lg shadow px-2 py-2 flex items-center gap-2">
-      <button
-        onClick={() => {
-          const position = calculateCurrentPosition();
-          const width = getContentWidth();
-          store.zoomOut(position, ZOOM_PERCENT_LEVELS, width);
-        }}
-        disabled={!store.canZoomOut(ZOOM_PERCENT_LEVELS)}
-        className="px-3 py-1 rounded text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-100"
-      >
-        −
-      </button>
+}> = observer(
+  ({ store, calculateCurrentPositionWithPage, getContentWidth }) => {
+    return (
+      <div className="fixed bottom-4 left-4 z-10 bg-white rounded-lg shadow px-2 py-2 flex items-center gap-2">
+        <button
+          onClick={() => {
+            const { pageNum, position } = calculateCurrentPositionWithPage();
+            const width = getContentWidth();
+            store.setPendingScrollRestore(pageNum, position);
+            store.zoomOut(position, ZOOM_PERCENT_LEVELS, width);
+          }}
+          disabled={!store.canZoomOut(ZOOM_PERCENT_LEVELS)}
+          className="px-3 py-1 rounded text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-100"
+        >
+          −
+        </button>
 
-      <span className="text-sm text-gray-600 min-w-[60px] text-center">
-        {Math.round(store.zoomPercent * 100)}%
-      </span>
+        <span className="text-sm text-gray-600 min-w-[60px] text-center">
+          {Math.round(store.zoomPercent * 100)}%
+        </span>
 
-      <button
-        onClick={() => {
-          const position = calculateCurrentPosition();
-          const width = getContentWidth();
-          store.zoomIn(position, ZOOM_PERCENT_LEVELS, width);
-        }}
-        disabled={!store.canZoomIn(ZOOM_PERCENT_LEVELS)}
-        className="px-3 py-1 rounded text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-100"
-      >
-        +
-      </button>
+        <button
+          onClick={() => {
+            const { pageNum, position } = calculateCurrentPositionWithPage();
+            const width = getContentWidth();
+            store.setPendingScrollRestore(pageNum, position);
+            store.zoomIn(position, ZOOM_PERCENT_LEVELS, width);
+          }}
+          disabled={!store.canZoomIn(ZOOM_PERCENT_LEVELS)}
+          className="px-3 py-1 rounded text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-100"
+        >
+          +
+        </button>
 
-      <button
-        onClick={() => {
-          const position = calculateCurrentPosition();
-          const width = getContentWidth();
-          store.fitToWidth(position, width);
-        }}
-        className="ml-1 px-2 py-1 rounded text-xs font-medium hover:bg-gray-100"
-        title="Fit page width to container"
-      >
-        Fit
-      </button>
+        <button
+          onClick={() => {
+            const { pageNum, position } = calculateCurrentPositionWithPage();
+            const width = getContentWidth();
+            store.setPendingScrollRestore(pageNum, position);
+            store.fitToWidth(position, width);
+          }}
+          className="ml-1 px-2 py-1 rounded text-xs font-medium hover:bg-gray-100"
+          title="Fit page width to container"
+        >
+          Fit
+        </button>
 
-      <button
-        onClick={() => {
-          const position = calculateCurrentPosition();
-          const width = getContentWidth();
-          store.resetZoom(position, width);
-        }}
-        className="px-2 py-1 rounded text-xs font-medium hover:bg-gray-100"
-        title="Reset to 100%"
-      >
-        100%
-      </button>
-    </div>
-  );
-});
+        <button
+          onClick={() => {
+            const { pageNum, position } = calculateCurrentPositionWithPage();
+            const width = getContentWidth();
+            store.setPendingScrollRestore(pageNum, position);
+            store.resetZoom(position, width);
+          }}
+          className="px-2 py-1 rounded text-xs font-medium hover:bg-gray-100"
+          title="Reset to 100%"
+        >
+          100%
+        </button>
+      </div>
+    );
+  },
+);
 
 /**
  * ARCHITECTURE: PDF Viewer Component
@@ -232,38 +238,82 @@ export const PdfViewer = observer(({ store }: PdfViewerProps) => {
   const [isDebugOpen, setIsDebugOpen] = useState(false);
 
   // Calculate current position within the current page (0.0 = top, 1.0 = bottom)
-  // Note: Read store.currentPage inside the callback to avoid re-creating on every page change
-  const calculateCurrentPosition = useCallback((): number => {
+  // Returns the page number and position as a tuple for zoom operations
+  // Note: This calculates the ACTUAL page at viewport center, not store.currentPage,
+  // to avoid race conditions with IntersectionObserver updates
+  const calculateCurrentPositionWithPage = useCallback((): {
+    pageNum: number;
+    position: number;
+  } => {
     if (!containerRef.current) {
-      console.log("[PdfViewer] calculateCurrentPosition: no containerRef");
-      return 0;
+      console.log(
+        "[PdfViewer] calculateCurrentPositionWithPage: no containerRef",
+      );
+      return { pageNum: store.currentPage, position: 0 };
     }
 
-    const pageNum = store.currentPage; // Read at call time from closure
     const container = containerRef.current;
-    const slot = slotRefs.current[pageNum - 1]; // Convert to 0-based index for array
+    const viewportCenter = container.clientHeight / 2;
+    const absoluteCenter = container.scrollTop + viewportCenter;
+
+    // Find which page contains the viewport center
+    let foundPageNum = store.currentPage;
+    for (let i = 0; i < slotRefs.current.length; i++) {
+      const slot = slotRefs.current[i];
+      if (!slot) continue;
+
+      const slotTop = slot.offsetTop;
+      const slotBottom = slotTop + slot.offsetHeight;
+
+      if (absoluteCenter >= slotTop && absoluteCenter < slotBottom) {
+        foundPageNum = i + 1; // Convert to 1-based page number
+        break;
+      }
+    }
+
+    const slot = slotRefs.current[foundPageNum - 1];
     if (!slot) {
       console.log(
-        `[PdfViewer] calculateCurrentPosition: no slot for page ${pageNum}`,
+        `[PdfViewer] calculateCurrentPositionWithPage: no slot for page ${foundPageNum}`,
       );
+      return { pageNum: foundPageNum, position: 0 };
+    }
+
+    // Calculate position within the found page
+    const slotTopRelativeToViewport = slot.offsetTop - container.scrollTop;
+    const distanceFromSlotTopToCenter =
+      viewportCenter - slotTopRelativeToViewport;
+    const h = slot.offsetHeight || 1;
+    const position = Math.max(0, Math.min(1, distanceFromSlotTopToCenter / h));
+
+    console.log(
+      `[PdfViewer] calculateCurrentPositionWithPage: page=${foundPageNum}, position=${position.toFixed(3)}`,
+    );
+    return { pageNum: foundPageNum, position };
+  }, [store]);
+
+  // Legacy wrapper for scroll position updates (uses store.currentPage)
+  const calculateCurrentPosition = useCallback((): number => {
+    if (!containerRef.current) {
       return 0;
     }
 
-    // Calculate position based on viewport center, not page top
-    // This handles cases where "current page" top is still below viewport
+    const pageNum = store.currentPage;
+    const container = containerRef.current;
+    const slot = slotRefs.current[pageNum - 1];
+    if (!slot) {
+      return 0;
+    }
+
     const viewportCenter = container.clientHeight / 2;
     const slotTopRelativeToViewport = slot.offsetTop - container.scrollTop;
     const distanceFromSlotTopToCenter =
       viewportCenter - slotTopRelativeToViewport;
     const h = slot.offsetHeight || 1;
-
-    // Position is where viewport center is within the page (0.0 = page top, 1.0 = page bottom)
     const position = Math.max(0, Math.min(1, distanceFromSlotTopToCenter / h));
-    console.log(
-      `[PdfViewer] calculateCurrentPosition: page=${pageNum}, slotTop=${slotTopRelativeToViewport.toFixed(1)}, viewportCenter=${viewportCenter.toFixed(1)}, h=${h.toFixed(1)}, position=${position.toFixed(3)}`,
-    );
+
     return position;
-  }, [store]); // Removed store.currentPage from deps for stable callback
+  }, [store]);
 
   // Get current content width directly from DOM
   // This avoids issues with stale state when ResizeObserver hasn't fired yet
@@ -350,7 +400,7 @@ export const PdfViewer = observer(({ store }: PdfViewerProps) => {
   useKeyboardShortcuts({
     store,
     containerRef,
-    calculateCurrentPosition,
+    calculateCurrentPositionWithPage,
     onNavigateToPage: (page: number) => {
       store.setCurrentPage(page);
       lastManualPageRef.current = page;
@@ -657,7 +707,7 @@ export const PdfViewer = observer(({ store }: PdfViewerProps) => {
       {pageCount > 0 && (
         <ZoomControlsObserver
           store={store}
-          calculateCurrentPosition={calculateCurrentPosition}
+          calculateCurrentPositionWithPage={calculateCurrentPositionWithPage}
           getContentWidth={getContentWidth}
         />
       )}

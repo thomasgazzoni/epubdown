@@ -1797,6 +1797,36 @@ export class PdfReaderStore {
   }
 
   /**
+   * Update position from scroll event
+   * Throttled to ~10/s to reduce URL write frequency
+   * @param getPosition Callback to calculate current position (0.0-1.0)
+   */
+  private lastPositionUpdateTime = 0;
+  updatePositionFromScroll(getPosition: () => number) {
+    console.log(
+      "[PdfReaderStore] updatePositionFromScroll called",
+      this.currentPage,
+      this.restoration.phase,
+    );
+
+    // Don't update position/URL until initial restoration is complete
+    if (this.restoration.shouldBlockUpdates) {
+      console.log(
+        "[PdfReaderStore] Blocking position update during restoration",
+      );
+      return;
+    }
+
+    // Throttle to ~10/s
+    const now = performance.now();
+    if (now - this.lastPositionUpdateTime > 100) {
+      const position = getPosition();
+      this.setPosition(position);
+      this.lastPositionUpdateTime = now;
+    }
+  }
+
+  /**
    * Finish initial page restoration
    * Called by render-completion callback or by timeout
    */

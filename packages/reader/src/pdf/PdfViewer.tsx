@@ -453,34 +453,6 @@ export const PdfViewer = observer(({ store }: PdfViewerProps) => {
     let rafIdForDpr: number | null = null;
     const prevDprRef = { current: window.devicePixelRatio || 1 };
 
-    // Update position immediately on scroll (no RAF delay)
-    const updatePosition = () => {
-      console.log(
-        "[PdfViewer] updatePosition called",
-        store.currentPage,
-        store.restoration.phase,
-      );
-
-      // Don't update position/URL until initial restoration is complete
-      if (store.restoration.shouldBlockUpdates) {
-        console.log("[PdfViewer] Blocking position update during restoration");
-        return;
-      }
-
-      const position = calculateCurrentPosition();
-      store.setPosition(position);
-    };
-
-    // Throttle position updates to ~10/s (fix #5)
-    let lastWriteTime = 0;
-    const throttledUpdatePosition = () => {
-      const now = performance.now();
-      if (now - lastWriteTime > 100) {
-        updatePosition();
-        lastWriteTime = now;
-      }
-    };
-
     // Notify store about scroll/layout changes (triggers render scheduling)
     const onScrollEvent = () => {
       // Skip render scheduling if this is a programmatic scroll
@@ -489,8 +461,8 @@ export const PdfViewer = observer(({ store }: PdfViewerProps) => {
         store.onScroll();
       }
 
-      // Update URL with throttling to reduce noise
-      throttledUpdatePosition();
+      // Update position in URL (throttled and restoration-aware in store)
+      store.updatePositionFromScroll(calculateCurrentPosition);
     };
 
     // Listen to scroll on the actual container, not window
@@ -521,7 +493,7 @@ export const PdfViewer = observer(({ store }: PdfViewerProps) => {
     else if ((mq as any)?.addListener) (mq as any).addListener(mqListener);
 
     // Trigger initial position update (only after restoration completes)
-    updatePosition();
+    store.updatePositionFromScroll(calculateCurrentPosition);
 
     return () => {
       if (rafIdForDpr !== null) {

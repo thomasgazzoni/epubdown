@@ -1464,6 +1464,15 @@ export class PdfReaderStore {
     // Use provided width or fall back to last known width
     const width = containerWidth ?? this.lastContainerWidth;
 
+    console.log(
+      "[PdfReaderStore] setZoomPercent width:",
+      width,
+      "containerWidth:",
+      containerWidth,
+      "lastContainerWidth:",
+      this.lastContainerWidth,
+    );
+
     // Apply viewport zoom if we have container width
     if (width > 0) {
       // 1) Recompute CSS/pixel sizes (also marks pages stale inside PdfState)
@@ -1681,7 +1690,7 @@ export class PdfReaderStore {
     this.docState.setDevicePixelRatio(dpr);
 
     // Reapply viewport zoom to recalculate with new DPR
-    // (setDevicePixelRatio already handled dimension recalc, but not per-page viewport zoom)
+    // (setDevicePixelRatio already handled dimension recalculation, but not per-page viewport zoom)
     if (this.lastContainerWidth > 0) {
       this.applyViewportZoom(this.lastContainerWidth);
     }

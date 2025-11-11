@@ -43,14 +43,15 @@ const PageSliderObserver: FC<{
 const ZoomControlsObserver: FC<{
   store: PdfReaderStore;
   calculateCurrentPosition: () => number;
-  contentWidth: number;
-}> = observer(({ store, calculateCurrentPosition, contentWidth }) => {
+  getContentWidth: () => number;
+}> = observer(({ store, calculateCurrentPosition, getContentWidth }) => {
   return (
     <div className="fixed bottom-4 left-4 z-10 bg-white rounded-lg shadow px-2 py-2 flex items-center gap-2">
       <button
         onClick={() => {
           const position = calculateCurrentPosition();
-          store.zoomOut(position, ZOOM_PERCENT_LEVELS, contentWidth);
+          const width = getContentWidth();
+          store.zoomOut(position, ZOOM_PERCENT_LEVELS, width);
         }}
         disabled={!store.canZoomOut(ZOOM_PERCENT_LEVELS)}
         className="px-3 py-1 rounded text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-100"
@@ -65,7 +66,8 @@ const ZoomControlsObserver: FC<{
       <button
         onClick={() => {
           const position = calculateCurrentPosition();
-          store.zoomIn(position, ZOOM_PERCENT_LEVELS, contentWidth);
+          const width = getContentWidth();
+          store.zoomIn(position, ZOOM_PERCENT_LEVELS, width);
         }}
         disabled={!store.canZoomIn(ZOOM_PERCENT_LEVELS)}
         className="px-3 py-1 rounded text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-100"
@@ -76,7 +78,8 @@ const ZoomControlsObserver: FC<{
       <button
         onClick={() => {
           const position = calculateCurrentPosition();
-          store.fitToWidth(position, contentWidth);
+          const width = getContentWidth();
+          store.fitToWidth(position, width);
         }}
         className="ml-1 px-2 py-1 rounded text-xs font-medium hover:bg-gray-100"
         title="Fit page width to container"
@@ -87,7 +90,8 @@ const ZoomControlsObserver: FC<{
       <button
         onClick={() => {
           const position = calculateCurrentPosition();
-          store.resetZoom(position, contentWidth);
+          const width = getContentWidth();
+          store.resetZoom(position, width);
         }}
         className="px-2 py-1 rounded text-xs font-medium hover:bg-gray-100"
         title="Reset to 100%"
@@ -245,6 +249,15 @@ export const PdfViewer = observer(({ store }: PdfViewerProps) => {
     // Return as ratio, clamped to [0, 1]
     return Math.max(0, Math.min(1, offset / h));
   }, [store]); // Removed store.currentPage from deps for stable callback
+
+  // Get current content width directly from DOM
+  // This avoids issues with stale state when ResizeObserver hasn't fired yet
+  const getContentWidth = useCallback((): number => {
+    if (!contentRef.current) return 0;
+    const width = contentRef.current.getBoundingClientRect().width;
+    console.log("[PdfViewer] getContentWidth:", width);
+    return width;
+  }, []);
 
   // Restore scroll position based on page number (1-based) and position percentage
   const restoreScrollPosition = (pageNum: number, position: number) => {
@@ -625,7 +638,7 @@ export const PdfViewer = observer(({ store }: PdfViewerProps) => {
         <ZoomControlsObserver
           store={store}
           calculateCurrentPosition={calculateCurrentPosition}
-          contentWidth={contentWidth}
+          getContentWidth={getContentWidth}
         />
       )}
 

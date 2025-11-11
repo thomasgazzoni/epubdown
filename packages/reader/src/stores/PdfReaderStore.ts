@@ -58,7 +58,7 @@ export type { PageStatus, PageData, TocNode };
  *    - Critical for fast initial render with correct layout
  *
  * 6. URL SYNCHRONIZATION:
- *    - URL params: ?page=N&ppi=N&position=0.0-1.0
+ *    - URL params: ?page=N&zoom=N&position=0.0-1.0
  *    - preventUrlWrite flag prevents flickering during initial restoration
  *    - writeUrl() throttled via state diffing (lastUrlState)
  *    - position writes are throttled separately in PdfViewer (100ms)
@@ -71,9 +71,9 @@ export type { PageStatus, PageData, TocNode };
  *
  * 8. COORDINATE SYSTEMS:
  *    - PDF points (pt): 72 dpi, from PDF spec
- *    - Pixels (px): canvas pixels = pt * (ppi/72) * devicePixelRatio
+ *    - Pixels (px): canvas pixels = pt * (effectivePpi/72) * devicePixelRatio
  *    - CSS pixels: px / devicePixelRatio
- *    - PPI (pixels per inch): user zoom level, default 144 (150% of 96 base)
+ *    - Effective PPI: calculated from viewport width and zoomPercent
  *
  * REFACTORING NOTES:
  * - Rendering infrastructure was merged from PdfRenderController into this store
@@ -98,11 +98,7 @@ export class PdfReaderStore {
   pageCount = 0;
   // Current page number (1-based), fully observable for MobX reactivity
   currentPage = 1;
-  // PPI (pixels per inch) - legacy zoom level (for manualPpi mode)
-  ppi = 96;
-  // Zoom mode: manualPpi (fixed PPI) or viewportPercent (% of screen width)
-  zoomMode: "manualPpi" | "viewportPercent" = "viewportPercent";
-  // Zoom percent for viewportPercent mode (1.0 = 100%, 0.75 = 75%, etc.)
+  // Zoom percent for viewport-based zoom (1.0 = 100%, 0.75 = 75%, etc.)
   zoomPercent = 1.0;
   // Last container width used for viewport zoom calculations
   private lastContainerWidth = 0;
@@ -235,10 +231,10 @@ export class PdfReaderStore {
   private readonly MAX_AREA_PX = 16_000_000; // cap total pixels (~4Kx4K)
 
   /**
-   * Clamp PPI to prevent huge bitmaps that blow memory budget
+   * Clamp effective PPI to prevent huge bitmaps that blow memory budget
    * @param wPt Page width in points
    * @param hPt Page height in points
-   * @param requestedPpi Desired PPI
+   * @param requestedPpi Desired effective PPI
    * @returns Safe PPI that respects pixel dimension caps
    */
   private clampPpiForPage(
@@ -246,14 +242,14 @@ export class PdfReaderStore {
     hPt: number,
     requestedPpi: number,
   ): number {
-    // points → pixels: px = (pt * ppi) / 72
+    // points → pixels: px = (pt * effectivePpi) / 72
     const ppiLimitBySide =
       (this.MAX_SIDE_PX * 72) / Math.max(wPt, hPt) / this.devicePixelRatio;
     const ppiLimitByArea =
       Math.sqrt((this.MAX_AREA_PX * 72 * 72) / (wPt * hPt)) /
       this.devicePixelRatio;
     const safe = Math.min(requestedPpi, ppiLimitBySide, ppiLimitByArea);
-    return Math.max(72, Math.floor(safe)); // keep >=72ppi
+    return Math.max(72, Math.floor(safe)); // keep >=72 effective ppi
   }
 
   /**
@@ -283,18 +279,18 @@ export class PdfReaderStore {
     // Get page dimensions
     const pageData = this.docState.getPageData(pageNum);
     if (!pageData?.wPt || !pageData?.hPt || !pageData?.wCss) {
-      return this.ppi; // fallback
+      return 96; // fallback to default PPI
     }
 
-    // In viewport mode, calculate PPI from target CSS width
-    if (this.zoomMode === "viewportPercent" && this.lastContainerWidth > 0) {
+    // Calculate PPI from viewport width and zoom percent
+    if (this.lastContainerWidth > 0) {
       const targetCssW = this.lastContainerWidth * this.zoomPercent;
       const effectivePpi = (targetCssW * 72) / pageData.wPt;
       return this.clampPpiForPage(pageData.wPt, pageData.hPt, effectivePpi);
     }
 
-    // Legacy manual PPI mode
-    return this.clampPpiForPage(pageData.wPt, pageData.hPt, this.ppi);
+    // Fallback when container width not yet measured
+    return 96;
   }
 
   /**
@@ -394,11 +390,7 @@ export class PdfReaderStore {
     const url = new URL(window.location.href);
     const page = Number(url.searchParams.get("page")) || 1;
     const position = Number(url.searchParams.get("position")) || 0;
-
-    // Check for zoom parameter (viewport mode)
     const zoom = Number(url.searchParams.get("zoom")) || 0;
-    // Check for legacy ppi parameter (manual PPI mode)
-    const ppi = Number(url.searchParams.get("ppi")) || 0;
 
     // Set up restoration if page > 1 or position > 0
     if (page > 1 || position > 0) {
@@ -408,13 +400,9 @@ export class PdfReaderStore {
         this.restoreTargetPosition = position;
         this.preventUrlWrite = true;
         this.currentPage = page;
-        // Restore zoom state
+        // Restore zoom if specified
         if (zoom > 0) {
-          this.zoomMode = "viewportPercent";
           this.zoomPercent = zoom;
-        } else if (ppi > 0) {
-          this.zoomMode = "manualPpi";
-          this.ppi = ppi;
         }
       });
     }
@@ -502,8 +490,6 @@ export class PdfReaderStore {
    * - Old canvases are GC'd when store is reset
    */
   async open(data: Uint8Array, kind: RendererKind = "PDFium") {
-    // Preserve ppi before disposing old controller
-    const currentPpi = this.ppi;
     this.disposeDocument();
     this.pdfBytes = data;
     this.engineKind = kind;
@@ -544,8 +530,6 @@ export class PdfReaderStore {
         runInAction(() => {
           this.pageCount = pageCount;
           this.docState.setTotalPages(pageCount);
-          this.docState.setPpi(currentPpi);
-          this.ppi = currentPpi;
 
           // Initialize render queue and scheduler for Worker
           this.initializeRenderInfrastructure();
@@ -604,8 +588,6 @@ export class PdfReaderStore {
       this.doc = doc;
       this.pageCount = doc.pageCount();
       this.docState.setTotalPages(this.pageCount);
-      this.docState.setPpi(currentPpi);
-      this.ppi = currentPpi;
 
       // Initialize render queue and scheduler
       this.initializeRenderInfrastructure();
@@ -1311,7 +1293,8 @@ export class PdfReaderStore {
   // ═══════════════════════════════════════════════════════════════
 
   /**
-   * Calculate PPI needed to fit page width to container
+   * Calculate effective PPI needed to fit page width to container
+   * (Used for legacy compatibility, prefer viewport zoom percent)
    */
   getMaxPpi(containerWidth: number, devicePixelRatio: number): number {
     if (!containerWidth || containerWidth <= 0 || this.pageCount === 0) {
@@ -1321,7 +1304,7 @@ export class PdfReaderStore {
     const pageData = this.docState.getPageData(this.currentPage);
     if (!pageData?.wPt) return 192;
 
-    // Calculate the PPI needed to fit the page width to the container
+    // Calculate the effective PPI needed to fit the page width to the container
     const targetPx = containerWidth * devicePixelRatio;
     const ppiFit = (targetPx * 72) / pageData.wPt;
 
@@ -1329,11 +1312,13 @@ export class PdfReaderStore {
   }
 
   /**
-   * Recalculate all page dimensions based on current PPI.
+   * Recalculate all page dimensions based on current zoom.
    */
   recalculateDimensions() {
     // Force recalculation of pixel dimensions for all pages
-    this.docState.setPpi(this.ppi);
+    if (this.lastContainerWidth > 0) {
+      this.docState.setViewportZoom(this.lastContainerWidth, this.zoomPercent);
+    }
   }
 
   /**
@@ -1451,38 +1436,6 @@ export class PdfReaderStore {
     }
   }
 
-  /**
-   * Change zoom level (PPI = pixels per inch)
-   *
-   * INVALIDATION CASCADE:
-   * 1. All page pixel dimensions recalculated (wPx, hPx)
-   * 2. All rendered canvases detached from cache
-   * 3. Page status reset to "ready" (needs re-render)
-   * 4. MobX triggers PdfViewer re-layout
-   * 5. Scheduler trigger starts new render cycle
-   *
-   * MEMORY IMPACT:
-   * - canvasBytes reset to 0 (all canvases will be GC'd)
-   * - New canvases will be larger (higher PPI) or smaller (lower PPI)
-   * - Cache budget enforcement happens during render cycle
-   *
-   * SCROLL POSITION PRESERVATION:
-   * - PdfViewer component handles scroll restoration
-   * - Captures position before setPpi(), restores after change
-   */
-  setPpi(ppi: number) {
-    if (ppi === this.ppi) return;
-    this.ppi = ppi;
-    this.docState.setPpi(ppi);
-    // Mark all full bitmaps as stale - keep displaying them until upgrades arrive
-    this.markZoomStale();
-    // Cancel pending renders (generation token will prevent old results)
-    this.cancelAll();
-
-    this.writeUrl();
-    this.triggerRender();
-  }
-
   onScroll() {
     // Trigger render immediately on scroll to ensure adjacent pages start rendering
     // The RenderQueue will prioritize pages closer to currentPage and cancel distant ones
@@ -1552,9 +1505,9 @@ export class PdfReaderStore {
     if (page > 0) {
       this.setCurrentPage(page);
     }
-    const ppi = Number(url.searchParams.get("ppi") ?? 0);
-    if (ppi > 0) {
-      this.setPpi(ppi);
+    const zoom = Number(url.searchParams.get("zoom") ?? 0);
+    if (zoom > 0) {
+      this.setZoomPercent(zoom);
     }
     const position = Number(url.searchParams.get("position") ?? 0);
     if (position >= 0 && position <= 1) {
@@ -1565,18 +1518,15 @@ export class PdfReaderStore {
   private lastUrlState: {
     page: number;
     zoom: string;
-    mode: "manualPpi" | "viewportPercent";
     position: string;
   } | null = null;
 
   /**
    * Synchronize current state to URL query parameters
    *
-   * URL FORMAT: ?page=5&zoom=1.0&position=0.234 (viewport mode)
-   *         OR: ?page=5&ppi=144&position=0.234 (manual PPI mode)
+   * URL FORMAT: ?page=5&zoom=1.0&position=0.234
    * - page: 1-based page number
-   * - zoom: viewport zoom percent (in viewportPercent mode)
-   * - ppi: pixels per inch (in manualPpi mode, legacy)
+   * - zoom: viewport zoom percent (1.0 = 100%, 0.75 = 75%, etc.)
    * - position: scroll position within page (0.0-1.0)
    *
    * THROTTLING STRATEGY:
@@ -1605,15 +1555,10 @@ export class PdfReaderStore {
     if (this.preventUrlWrite) return;
 
     const positionStr = this.currentPosition.toFixed(3);
-    // Serialize zoom based on current mode
-    const zoomValue =
-      this.zoomMode === "viewportPercent"
-        ? this.zoomPercent.toFixed(3)
-        : String(this.ppi);
+    const zoomValue = this.zoomPercent.toFixed(3);
     const newState = {
       page: this.currentPage,
       zoom: zoomValue,
-      mode: this.zoomMode,
       position: positionStr,
     };
 
@@ -1622,7 +1567,6 @@ export class PdfReaderStore {
       this.lastUrlState &&
       this.lastUrlState.page === newState.page &&
       this.lastUrlState.zoom === newState.zoom &&
-      this.lastUrlState.mode === newState.mode &&
       this.lastUrlState.position === newState.position
     ) {
       return;
@@ -1631,14 +1575,7 @@ export class PdfReaderStore {
     this.lastUrlState = newState;
     const url = new URL(window.location.href);
     url.searchParams.set("page", String(newState.page));
-    // Write appropriate zoom parameter based on mode
-    if (this.zoomMode === "viewportPercent") {
-      url.searchParams.set("zoom", newState.zoom);
-      url.searchParams.delete("ppi"); // Remove legacy ppi if present
-    } else {
-      url.searchParams.set("ppi", newState.zoom);
-      url.searchParams.delete("zoom"); // Remove zoom if present
-    }
+    url.searchParams.set("zoom", newState.zoom);
     url.searchParams.set("position", positionStr);
     window.history.replaceState(null, "", url.pathname + url.search + url.hash);
   }
@@ -1698,9 +1635,9 @@ export class PdfReaderStore {
     // setDevicePixelRatio will recalculate dimensions and mark stale only if changed
     this.docState.setDevicePixelRatio(dpr);
 
-    // In viewport mode, reapply viewport zoom to recalculate with new DPR
+    // Reapply viewport zoom to recalculate with new DPR
     // (setDevicePixelRatio already handled dimension recalc, but not per-page viewport zoom)
-    if (this.zoomMode === "viewportPercent" && this.lastContainerWidth > 0) {
+    if (this.lastContainerWidth > 0) {
       this.applyViewportZoom(this.lastContainerWidth);
     }
 

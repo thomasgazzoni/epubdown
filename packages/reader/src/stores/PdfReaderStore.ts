@@ -1654,30 +1654,6 @@ export class PdfReaderStore {
   }
 
   /**
-   * Begin initial page restoration
-   * Called once we know which page/position to show first
-   * (typically after loading PDF and reading URL params)
-   * @param targetPageNum 1-based page number
-   */
-  beginInitialRestore(targetPageNum: number, position: number) {
-    // Guard against invalid page number
-    if (targetPageNum < 1 || targetPageNum > this.pageCount) return;
-
-    this.isRestoringInitialView = true;
-    this.restoreTargetPageNum = targetPageNum;
-    this.restoreTargetPosition = position;
-
-    // Safety timeout: in case page never gets rendered we still unblock UI
-    if (this.restoreTimer !== null) {
-      clearTimeout(this.restoreTimer);
-      this.restoreTimer = null;
-    }
-    this.restoreTimer = window.setTimeout(() => {
-      this.finishInitialRestore();
-    }, 2000); // 2 second timeout matches component behavior
-  }
-
-  /**
    * Finish initial page restoration
    * Called by render-completion callback or by timeout
    */

@@ -549,11 +549,17 @@ export const PdfViewer = observer(({ store }: PdfViewerProps) => {
       requestAnimationFrame(() => {
         withProgrammaticScroll(() => {
           restoreScrollPosition(pageNum, position);
-          store.finishInitialRestore();
         });
-        setTimeout(() => {
-          store.finishInitialRestore();
-        }, 200);
+
+        // Trigger render after scroll restoration (important for pages to show up)
+        requestAnimationFrame(() => {
+          store.onScroll();
+
+          // Finish restore after a short delay to allow initial render to complete
+          setTimeout(() => {
+            store.finishInitialRestore();
+          }, 200);
+        });
       });
     });
   }, [

@@ -42,28 +42,8 @@ const PageSliderObserver: FC<{
  */
 const ZoomControlsObserver: FC<{
   store: PdfReaderStore;
-  containerRef: React.RefObject<HTMLDivElement | null>;
-  contentWidth: number;
-}> = observer(({ store, containerRef, contentWidth }) => {
-  // Calculate position within current page
-  const calculateCurrentPosition = useCallback((): number => {
-    if (!containerRef.current) return 0;
-
-    const pageNum = store.currentPage;
-    const container = containerRef.current;
-    const slots = container.querySelectorAll(".pdf-page-slot");
-    const slot = slots[pageNum - 1] as HTMLElement | undefined;
-    if (!slot) return 0;
-
-    // Use offsetTop to avoid layout thrashing from getBoundingClientRect
-    const top = slot.offsetTop - container.scrollTop;
-    const offset = -top;
-    const h = slot.offsetHeight || 1;
-
-    // Return as ratio, clamped to [0, 1]
-    return Math.max(0, Math.min(1, offset / h));
-  }, [store, containerRef]);
-
+  calculateCurrentPosition: () => number;
+}> = observer(({ store, calculateCurrentPosition }) => {
   return (
     <div className="fixed bottom-4 left-4 z-10 bg-white rounded-lg shadow px-2 py-2 flex items-center gap-2">
       <button
@@ -200,6 +180,41 @@ export const PdfViewer = observer(({ store }: PdfViewerProps) => {
   // Flag to prevent intersection observer from updating page during programmatic scrolls
   const isProgrammaticScrollRef = useRef(false);
 
+  /**
+   * Helper to perform programmatic scroll and clear flag reliably
+   * Uses RAF instead of setTimeout for more reliable scroll event handling
+   */
+  const performProgrammaticScroll = useCallback(
+    (slot: HTMLElement, behavior: ScrollBehavior = "auto") => {
+      isProgrammaticScrollRef.current = true;
+      slot.scrollIntoView({ behavior, block: "start" });
+
+      // Use double RAF to ensure scroll event has been processed
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          isProgrammaticScrollRef.current = false;
+        });
+      });
+    },
+    [],
+  );
+
+  /**
+   * Helper to wrap programmatic scroll operations (for direct scrollTop setting)
+   * Uses RAF instead of setTimeout for more reliable flag clearing
+   */
+  const withProgrammaticScroll = useCallback((fn: () => void) => {
+    isProgrammaticScrollRef.current = true;
+    fn();
+
+    // Use double RAF to ensure scroll event has been processed
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        isProgrammaticScrollRef.current = false;
+      });
+    });
+  }, []);
+
   // ═══════════════════════════════════════════════════════════════
   // DEVICE PIXEL RATIO TRACKING
   // ═══════════════════════════════════════════════════════════════
@@ -212,10 +227,11 @@ export const PdfViewer = observer(({ store }: PdfViewerProps) => {
   const [isDebugOpen, setIsDebugOpen] = useState(false);
 
   // Calculate current position within the current page (0.0 = top, 1.0 = bottom)
+  // Note: Read store.currentPage inside the callback to avoid re-creating on every page change
   const calculateCurrentPosition = useCallback((): number => {
     if (!containerRef.current) return 0;
 
-    const pageNum = store.currentPage;
+    const pageNum = store.currentPage; // Read at call time from closure
     const container = containerRef.current;
     const slot = slotRefs.current[pageNum - 1]; // Convert to 0-based index for array
     if (!slot) return 0;
@@ -227,7 +243,7 @@ export const PdfViewer = observer(({ store }: PdfViewerProps) => {
 
     // Return as ratio, clamped to [0, 1]
     return Math.max(0, Math.min(1, offset / h));
-  }, [store, store.currentPage]);
+  }, [store]); // Removed store.currentPage from deps for stable callback
 
   // Restore scroll position based on page number (1-based) and position percentage
   const restoreScrollPosition = (pageNum: number, position: number) => {
@@ -294,22 +310,12 @@ export const PdfViewer = observer(({ store }: PdfViewerProps) => {
 
     lastManualPageRef.current = store.currentPage;
 
-    // Prevent intersection observer from interfering during programmatic scroll
-    isProgrammaticScrollRef.current = true;
-
     // Scroll to the page (convert to 0-based index for array)
     const slot = slotRefs.current[store.currentPage - 1];
     if (slot && containerRef.current) {
-      slot.scrollIntoView({ behavior: "auto", block: "start" });
+      performProgrammaticScroll(slot);
     }
-
-    // Clear flag after scroll settles
-    const timer = setTimeout(() => {
-      isProgrammaticScrollRef.current = false;
-    }, 100);
-
-    return () => clearTimeout(timer);
-  }, [store, store.currentPage]);
+  }, [store, store.currentPage, performProgrammaticScroll]);
 
   // Keyboard shortcuts for zoom and navigation
   useKeyboardShortcuts({
@@ -317,44 +323,28 @@ export const PdfViewer = observer(({ store }: PdfViewerProps) => {
     containerRef,
     calculateCurrentPosition,
     onNavigateToPage: (page: number) => {
-      // Prevent intersection observer from interfering during programmatic scroll
-      isProgrammaticScrollRef.current = true;
-
       store.setCurrentPage(page);
       lastManualPageRef.current = page;
 
       const slot = slotRefs.current[page - 1];
       if (slot && containerRef.current) {
-        slot.scrollIntoView({ behavior: "smooth", block: "start" });
+        performProgrammaticScroll(slot, "smooth");
       }
-
-      // Clear flag after scroll settles (longer timeout for smooth scrolling)
-      setTimeout(() => {
-        isProgrammaticScrollRef.current = false;
-      }, 500);
     },
   });
 
   // Handle page changes from PageSlider
   const handlePageSliderChange = useCallback(
     (page: number) => {
-      // Prevent intersection observer from interfering during programmatic scroll
-      isProgrammaticScrollRef.current = true;
-
       store.setCurrentPage(page);
       lastManualPageRef.current = page;
 
       const slot = slotRefs.current[page - 1];
       if (slot && containerRef.current) {
-        slot.scrollIntoView({ behavior: "auto", block: "start" });
+        performProgrammaticScroll(slot);
       }
-
-      // Clear flag after scroll settles (even with auto behavior, allow some time)
-      setTimeout(() => {
-        isProgrammaticScrollRef.current = false;
-      }, 100);
     },
-    [store],
+    [store, performProgrammaticScroll],
   );
 
   useEffect(() => {
@@ -475,7 +465,6 @@ export const PdfViewer = observer(({ store }: PdfViewerProps) => {
       rafIdForDpr = window.requestAnimationFrame(() => {
         rafIdForDpr = null;
         const nowDpr = window.devicePixelRatio || 1;
-        console.log("nowDpr", nowDpr);
 
         const dprChanged = Math.abs(nowDpr - prevDprRef.current) > 0.001;
         if (dprChanged) {
@@ -526,21 +515,21 @@ export const PdfViewer = observer(({ store }: PdfViewerProps) => {
     // Clear the pending restore
     store.clearPendingScrollRestore();
 
-    // Prevent intersection observer interference during restoration
-    isProgrammaticScrollRef.current = true;
-
     // Use double RAF to ensure layout has settled
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
-        restoreScrollPosition(pageNum, position);
-        // Clear programmatic scroll flag
-        setTimeout(() => {
-          isProgrammaticScrollRef.current = false;
+        withProgrammaticScroll(() => {
+          restoreScrollPosition(pageNum, position);
           store.finishInitialRestore();
-        }, 100);
+        });
       });
     });
-  }, [store, store.pageCount, store.pendingScrollRestore]);
+  }, [
+    store,
+    store.pageCount,
+    store.pendingScrollRestore,
+    withProgrammaticScroll,
+  ]);
 
   // ═══════════════════════════════════════════════════════════════
   // ZOOM SCROLL RESTORATION (for zoom changes)
@@ -574,21 +563,18 @@ export const PdfViewer = observer(({ store }: PdfViewerProps) => {
     // Clear the pending restore
     store.clearPendingScrollRestore();
 
-    // Prevent intersection observer interference during restoration
-    isProgrammaticScrollRef.current = true;
-
     // Use double RAF to ensure layout has settled after PPI change
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
-        restoreScrollPosition(pageNum, position);
-        console.log(`[PdfViewer] Scroll position restored to page ${pageNum}`);
-        // Clear programmatic scroll flag
-        setTimeout(() => {
-          isProgrammaticScrollRef.current = false;
-        }, 100);
+        withProgrammaticScroll(() => {
+          restoreScrollPosition(pageNum, position);
+          console.log(
+            `[PdfViewer] Scroll position restored to page ${pageNum}`,
+          );
+        });
       });
     });
-  }, [store, store.pendingScrollRestore]);
+  }, [store, store.pendingScrollRestore, withProgrammaticScroll]);
 
   if (store.isLoading) {
     return (
@@ -637,8 +623,7 @@ export const PdfViewer = observer(({ store }: PdfViewerProps) => {
       {pageCount > 0 && (
         <ZoomControlsObserver
           store={store}
-          containerRef={containerRef}
-          contentWidth={contentWidth}
+          calculateCurrentPosition={calculateCurrentPosition}
         />
       )}
 

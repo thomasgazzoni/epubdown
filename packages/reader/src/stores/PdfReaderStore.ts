@@ -393,8 +393,12 @@ export class PdfReaderStore {
     if (typeof window === "undefined") return;
     const url = new URL(window.location.href);
     const page = Number(url.searchParams.get("page")) || 1;
-    const ppi = Number(url.searchParams.get("ppi")) || 0;
     const position = Number(url.searchParams.get("position")) || 0;
+
+    // Check for zoom parameter (viewport mode)
+    const zoom = Number(url.searchParams.get("zoom")) || 0;
+    // Check for legacy ppi parameter (manual PPI mode)
+    const ppi = Number(url.searchParams.get("ppi")) || 0;
 
     // Set up restoration if page > 1 or position > 0
     if (page > 1 || position > 0) {
@@ -404,7 +408,12 @@ export class PdfReaderStore {
         this.restoreTargetPosition = position;
         this.preventUrlWrite = true;
         this.currentPage = page;
-        if (ppi > 0) {
+        // Restore zoom state
+        if (zoom > 0) {
+          this.zoomMode = "viewportPercent";
+          this.zoomPercent = zoom;
+        } else if (ppi > 0) {
+          this.zoomMode = "manualPpi";
           this.ppi = ppi;
         }
       });
@@ -632,13 +641,16 @@ export class PdfReaderStore {
   private async loadPageSizes(): Promise<void> {
     if (!this.currentBookId || this.pageCount === 0) return;
 
-    const maxPageWidth = 0;
-
     // Try to load from cache
     const cachedSizes = await this.pageSizeCache.getPageSizes(
       this.currentBookId,
     );
     const hasValidCache = cachedSizes && cachedSizes.length === this.pageCount;
+
+    // Convert cache array to Map for O(1) lookup
+    const cacheByPage = new Map(
+      cachedSizes?.map((s) => [s.pageNumber, s]) ?? [],
+    );
 
     // Single loop to process all pages (1-based page numbers)
     const newSizes: Array<{
@@ -647,28 +659,93 @@ export class PdfReaderStore {
       heightPt: number;
     }> = [];
 
+    let maxPageWidth = 0;
+
+    // In worker mode without cache, temporarily load doc on main thread for page sizes
+    let tempDoc: DocumentHandle | null = null;
+    if (!hasValidCache && this.useWorker && !this.doc) {
+      if (this.debug) {
+        console.log(
+          "[PdfReaderStore] Worker mode + no cache: loading doc on main thread for page sizes",
+        );
+      }
+      const engine = this.makeEngine(this.engineKind);
+      const initOptions =
+        this.engineKind === "PDFium"
+          ? { wasmUrl: DEFAULT_PDFIUM_WASM_URL }
+          : undefined;
+      await engine.init(initOptions);
+      if (this.pdfBytes) {
+        tempDoc = await engine.loadDocument(this.pdfBytes);
+      }
+    }
+
     for (let pageNum = 1; pageNum <= this.pageCount; pageNum++) {
       if (hasValidCache) {
-        // Find cached size by pageNumber (cache now uses 1-based page numbers)
-        const cached = cachedSizes.find((s) => s.pageNumber === pageNum);
+        // O(1) lookup instead of O(n) find
+        const cached = cacheByPage.get(pageNum);
         if (cached) {
           this.docState.setPageDim(pageNum, cached.widthPt, cached.heightPt);
           const pageData = this.docState.getPageData(pageNum);
           if (pageData?.status === "idle") {
             this.docState.setPageStatus(pageNum, "ready");
           }
+          // Track maximum CSS width
+          if (pageData?.wCss && pageData.wCss > maxPageWidth) {
+            maxPageWidth = pageData.wCss;
+          }
         }
       } else {
-        // Load from PDF
-        await this.ensurePageSize(pageNum);
-        const pageData = this.docState.getPageData(pageNum);
-        if (pageData.wPt && pageData.hPt) {
-          newSizes.push({
-            pageNumber: pageNum, // Cache now uses 1-based page numbers
-            widthPt: pageData.wPt,
-            heightPt: pageData.hPt,
-          });
+        // Load from PDF (either this.doc or tempDoc in worker mode)
+        if (tempDoc) {
+          // Worker mode: use temporary doc
+          this.docState.setPageStatus(pageNum, "sizing");
+          try {
+            const { wPt, hPt } = await tempDoc.getPageSize(pageNum - 1);
+            this.docState.setPageDim(pageNum, wPt, hPt);
+            this.docState.setPageStatus(pageNum, "ready");
+            const pageData = this.docState.getPageData(pageNum);
+            if (pageData.wPt && pageData.hPt) {
+              newSizes.push({
+                pageNumber: pageNum,
+                widthPt: pageData.wPt,
+                heightPt: pageData.hPt,
+              });
+              // Track maximum CSS width
+              if (pageData.wCss && pageData.wCss > maxPageWidth) {
+                maxPageWidth = pageData.wCss;
+              }
+            }
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            this.docState.setPageError(pageNum, message);
+          }
+        } else {
+          // Main-thread mode: use ensurePageSize
+          await this.ensurePageSize(pageNum);
+          const pageData = this.docState.getPageData(pageNum);
+          if (pageData.wPt && pageData.hPt) {
+            newSizes.push({
+              pageNumber: pageNum, // Cache now uses 1-based page numbers
+              widthPt: pageData.wPt,
+              heightPt: pageData.hPt,
+            });
+            // Track maximum CSS width
+            if (pageData.wCss && pageData.wCss > maxPageWidth) {
+              maxPageWidth = pageData.wCss;
+            }
+          }
         }
+      }
+    }
+
+    // Clean up temporary doc
+    if (tempDoc) {
+      tempDoc.destroy();
+      if (this.debug) {
+        console.log(
+          "[PdfReaderStore] Temporary doc destroyed after loading page sizes",
+        );
       }
     }
 
@@ -853,9 +930,11 @@ export class PdfReaderStore {
     const totalBytes = this.memoryBytes + this.bitmapBytes;
     if (totalBytes <= this.memoryBudgetBytes) return;
 
-    console.log(
-      `[MEMORY] Over budget: ${(totalBytes / 1024 / 1024).toFixed(1)} MB / ${(this.memoryBudgetBytes / 1024 / 1024).toFixed(0)} MB`,
-    );
+    if (this.debug) {
+      console.log(
+        `[MEMORY] Over budget: ${(totalBytes / 1024 / 1024).toFixed(1)} MB / ${(this.memoryBudgetBytes / 1024 / 1024).toFixed(0)} MB`,
+      );
+    }
 
     // Protect pages in render window (current ± 1, matching lookahead)
     const windowStart = Math.max(1, this.currentPage - 1);
@@ -877,9 +956,11 @@ export class PdfReaderStore {
       const bitmap = this.bitmaps.get(page.pageNumber);
       if (bitmap) {
         const size = this.getBitmapSize(bitmap);
-        console.log(
-          `[MEMORY] Evicting page ${page.pageNumber} full bitmap (${(size / 1024 / 1024).toFixed(2)} MB)`,
-        );
+        if (this.debug) {
+          console.log(
+            `[MEMORY] Evicting page ${page.pageNumber} full bitmap (${(size / 1024 / 1024).toFixed(2)} MB)`,
+          );
+        }
         this.bitmapBytes -= size;
         bitmap.close();
         this.bitmaps.delete(page.pageNumber);
@@ -890,9 +971,11 @@ export class PdfReaderStore {
       const canvas = this.canvases.get(page.pageNumber);
       if (canvas) {
         const size = this.getCanvasSize(canvas);
-        console.log(
-          `[MEMORY] Evicting page ${page.pageNumber} canvas (${(size / 1024 / 1024).toFixed(2)} MB)`,
-        );
+        if (this.debug) {
+          console.log(
+            `[MEMORY] Evicting page ${page.pageNumber} canvas (${(size / 1024 / 1024).toFixed(2)} MB)`,
+          );
+        }
         this.detachCanvas(page.pageNumber, canvas);
         this.canvases.delete(page.pageNumber);
       }
@@ -900,9 +983,11 @@ export class PdfReaderStore {
 
     // Second pass: if still over budget, evict full bitmaps inside window (emergency)
     if (this.memoryBytes + this.bitmapBytes > this.memoryBudgetBytes) {
-      console.log(
-        "[MEMORY] Still over budget after first pass, evicting inside window",
-      );
+      if (this.debug) {
+        console.log(
+          "[MEMORY] Still over budget after first pass, evicting inside window",
+        );
+      }
       for (const page of pages) {
         if (this.memoryBytes + this.bitmapBytes <= this.memoryBudgetBytes)
           break;
@@ -910,9 +995,11 @@ export class PdfReaderStore {
         const bitmap = this.bitmaps.get(page.pageNumber);
         if (bitmap) {
           const size = this.getBitmapSize(bitmap);
-          console.log(
-            `[MEMORY] EMERGENCY: Evicting page ${page.pageNumber} full bitmap (${(size / 1024 / 1024).toFixed(2)} MB)`,
-          );
+          if (this.debug) {
+            console.log(
+              `[MEMORY] EMERGENCY: Evicting page ${page.pageNumber} full bitmap (${(size / 1024 / 1024).toFixed(2)} MB)`,
+            );
+          }
           this.bitmapBytes -= size;
           bitmap.close();
           this.bitmaps.delete(page.pageNumber);
@@ -1475,15 +1562,21 @@ export class PdfReaderStore {
     }
   }
 
-  private lastUrlState: { page: number; ppi: number; position: string } | null =
-    null;
+  private lastUrlState: {
+    page: number;
+    zoom: string;
+    mode: "manualPpi" | "viewportPercent";
+    position: string;
+  } | null = null;
 
   /**
    * Synchronize current state to URL query parameters
    *
-   * URL FORMAT: ?page=5&ppi=144&position=0.234
+   * URL FORMAT: ?page=5&zoom=1.0&position=0.234 (viewport mode)
+   *         OR: ?page=5&ppi=144&position=0.234 (manual PPI mode)
    * - page: 1-based page number
-   * - ppi: current zoom level
+   * - zoom: viewport zoom percent (in viewportPercent mode)
+   * - ppi: pixels per inch (in manualPpi mode, legacy)
    * - position: scroll position within page (0.0-1.0)
    *
    * THROTTLING STRATEGY:
@@ -1512,9 +1605,15 @@ export class PdfReaderStore {
     if (this.preventUrlWrite) return;
 
     const positionStr = this.currentPosition.toFixed(3);
+    // Serialize zoom based on current mode
+    const zoomValue =
+      this.zoomMode === "viewportPercent"
+        ? this.zoomPercent.toFixed(3)
+        : String(this.ppi);
     const newState = {
       page: this.currentPage,
-      ppi: this.ppi,
+      zoom: zoomValue,
+      mode: this.zoomMode,
       position: positionStr,
     };
 
@@ -1522,7 +1621,8 @@ export class PdfReaderStore {
     if (
       this.lastUrlState &&
       this.lastUrlState.page === newState.page &&
-      this.lastUrlState.ppi === newState.ppi &&
+      this.lastUrlState.zoom === newState.zoom &&
+      this.lastUrlState.mode === newState.mode &&
       this.lastUrlState.position === newState.position
     ) {
       return;
@@ -1531,7 +1631,14 @@ export class PdfReaderStore {
     this.lastUrlState = newState;
     const url = new URL(window.location.href);
     url.searchParams.set("page", String(newState.page));
-    url.searchParams.set("ppi", String(newState.ppi));
+    // Write appropriate zoom parameter based on mode
+    if (this.zoomMode === "viewportPercent") {
+      url.searchParams.set("zoom", newState.zoom);
+      url.searchParams.delete("ppi"); // Remove legacy ppi if present
+    } else {
+      url.searchParams.set("ppi", newState.zoom);
+      url.searchParams.delete("zoom"); // Remove zoom if present
+    }
     url.searchParams.set("position", positionStr);
     window.history.replaceState(null, "", url.pathname + url.search + url.hash);
   }
@@ -1606,9 +1713,11 @@ export class PdfReaderStore {
    * @param pageNum 1-based page number
    */
   setPendingScrollRestore(pageNum: number, position: number) {
-    console.log(
-      `[STORE] Setting pending scroll restore: page ${pageNum}, position ${position.toFixed(3)}`,
-    );
+    if (this.debug) {
+      console.log(
+        `[STORE] Setting pending scroll restore: page ${pageNum}, position ${position.toFixed(3)}`,
+      );
+    }
     this.pendingScrollRestore = { pageNum, position };
   }
 

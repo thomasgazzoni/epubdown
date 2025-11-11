@@ -43,8 +43,8 @@ const PageSliderObserver: FC<{
 const ZoomControlsObserver: FC<{
   store: PdfReaderStore;
   containerRef: React.RefObject<HTMLDivElement | null>;
-  containerWidth: number;
-}> = observer(({ store, containerRef, containerWidth }) => {
+  contentWidth: number;
+}> = observer(({ store, containerRef, contentWidth }) => {
   // Calculate position within current page
   const calculateCurrentPosition = useCallback((): number => {
     if (!containerRef.current) return 0;
@@ -189,6 +189,9 @@ export const PdfViewer = observer(({ store }: PdfViewerProps) => {
   // DOM REFS - These persist across re-renders
   // ═══════════════════════════════════════════════════════════════
   const containerRef = useRef<HTMLDivElement>(null);
+  // contentRef: Inner container holding the pages (with max-width and padding)
+  // Used for accurate width measurement for viewport zoom
+  const contentRef = useRef<HTMLDivElement>(null);
   // slotRefs: Array of page container divs (one per page)
   // Used for: scrollIntoView, IntersectionObserver, position calculations
   const slotRefs = useRef<(HTMLDivElement | null)[]>([]);
@@ -202,8 +205,8 @@ export const PdfViewer = observer(({ store }: PdfViewerProps) => {
   // ═══════════════════════════════════════════════════════════════
   // devicePixelRatio is tracked in store
 
-  // Track container width for responsive zoom calculations
-  const [containerWidth, setContainerWidth] = useState(0);
+  // Track content width (inner container) for accurate viewport zoom calculations
+  const [contentWidth, setContentWidth] = useState(0);
 
   // Debug overlay state
   const [isDebugOpen, setIsDebugOpen] = useState(false);
@@ -246,28 +249,29 @@ export const PdfViewer = observer(({ store }: PdfViewerProps) => {
 
   // Apply initial viewport zoom when pages are loaded
   useEffect(() => {
-    if (store.pageCount > 0 && containerWidth > 0) {
-      store.applyViewportZoom(containerWidth);
+    if (store.pageCount > 0 && contentWidth > 0) {
+      store.applyViewportZoom(contentWidth);
     }
-  }, [store, store.pageCount, containerWidth]);
+  }, [store, store.pageCount, contentWidth]);
 
-  // Track container width for zoom calculations
+  // Track content width for accurate viewport zoom calculations
+  // Observe the inner container (with max-width and padding) not the outer scroll viewport
   useEffect(() => {
-    if (!containerRef.current) return;
+    if (!contentRef.current) return;
 
     const resizeObserver = new ResizeObserver((entries) => {
       for (const entry of entries) {
         const width = entry.contentRect.width;
-        setContainerWidth(width);
+        setContentWidth(width);
 
-        // Apply viewport zoom when container width changes
+        // Apply viewport zoom when content width changes
         if (width > 0 && store.pageCount > 0) {
           store.applyViewportZoom(width);
         }
       }
     });
 
-    resizeObserver.observe(containerRef.current);
+    resizeObserver.observe(contentRef.current);
 
     return () => {
       resizeObserver.disconnect();
@@ -634,7 +638,7 @@ export const PdfViewer = observer(({ store }: PdfViewerProps) => {
         <ZoomControlsObserver
           store={store}
           containerRef={containerRef}
-          containerWidth={containerWidth}
+          contentWidth={contentWidth}
         />
       )}
 
@@ -648,6 +652,7 @@ export const PdfViewer = observer(({ store }: PdfViewerProps) => {
       )}
 
       <div
+        ref={contentRef}
         className="pdf-scroll-container mx-auto px-4 py-8"
         style={{ maxWidth: containerMaxWidth }}
       >

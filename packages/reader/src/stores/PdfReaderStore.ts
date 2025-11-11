@@ -1587,19 +1587,17 @@ export class PdfReaderStore {
   updateDevicePixelRatio(dpr: number) {
     if (Math.abs(this.devicePixelRatio - dpr) < 0.001) return;
     this.devicePixelRatio = dpr;
-    this.docState.setDevicePixelRatio(dpr);
-    // Mark all full bitmaps as stale before recalculating dimensions
-    this.markZoomStale();
 
-    // Reapply zoom based on mode
+    // setDevicePixelRatio will recalculate dimensions and mark stale only if changed
+    this.docState.setDevicePixelRatio(dpr);
+
+    // In viewport mode, reapply viewport zoom to recalculate with new DPR
+    // (setDevicePixelRatio already handled dimension recalc, but not per-page viewport zoom)
     if (this.zoomMode === "viewportPercent" && this.lastContainerWidth > 0) {
       this.applyViewportZoom(this.lastContainerWidth);
-    } else {
-      // Legacy manual PPI mode
-      this.recalculateDimensions();
     }
 
-    // Trigger re-render with new DPR
+    // Trigger re-render with new DPR (only if dimensions changed)
     this.triggerRender();
   }
 

@@ -287,13 +287,21 @@ export const PdfDebugOverlay = observer(
               <div className="text-gray-400 mb-2">Display</div>
               <div className="space-y-1">
                 <div className="flex justify-between">
-                  <span className="text-gray-400">PPI:</span>
-                  <span className="font-bold">{store.ppi}</span>
-                </div>
-                <div className="flex justify-between">
                   <span className="text-gray-400">Zoom:</span>
                   <span className="font-bold">
-                    {Math.round((store.ppi / 96) * 100)}%
+                    {Math.round(store.zoomPercent * 100)}%{(() => {
+                      // Calculate effective PPI for current page
+                      const current = store.getPageData(store.currentPage);
+                      if (current?.wPt && current?.wCss) {
+                        const effPpi = (current.wCss * 72) / current.wPt;
+                        return (
+                          <span className="text-gray-400 ml-2 font-normal">
+                            (~{Math.round(effPpi)} ppi)
+                          </span>
+                        );
+                      }
+                      return null;
+                    })()}
                   </span>
                 </div>
                 <div className="flex justify-between">

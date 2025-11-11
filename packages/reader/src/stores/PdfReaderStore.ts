@@ -1604,9 +1604,15 @@ export class PdfReaderStore {
    * - Could extract to separate URLSyncService
    */
   writeUrl() {
-    if (typeof window === "undefined") return;
+    if (typeof window === "undefined") {
+      console.log("[PdfReaderStore] writeUrl: skipping (no window)");
+      return;
+    }
     // Don't write URL during initial restoration to prevent flickering
-    if (this.preventUrlWrite) return;
+    if (this.preventUrlWrite) {
+      console.log("[PdfReaderStore] writeUrl: skipping (preventUrlWrite=true)");
+      return;
+    }
 
     const positionStr = this.currentPosition.toFixed(3);
     const zoomValue = this.zoomPercent.toFixed(3);
@@ -1623,9 +1629,13 @@ export class PdfReaderStore {
       this.lastUrlState.zoom === newState.zoom &&
       this.lastUrlState.position === newState.position
     ) {
+      console.log("[PdfReaderStore] writeUrl: skipping (no state change)");
       return;
     }
 
+    console.log(
+      `[PdfReaderStore] writeUrl: page=${newState.page}, zoom=${newState.zoom}, position=${newState.position}`,
+    );
     this.lastUrlState = newState;
     const url = new URL(window.location.href);
     url.searchParams.set("page", String(newState.page));
@@ -1636,6 +1646,9 @@ export class PdfReaderStore {
 
   setPosition(position: number) {
     const newPos = Math.max(0, Math.min(1, position));
+    console.log(
+      `[PdfReaderStore] setPosition: ${newPos.toFixed(3)} (currentPage=${this.currentPage})`,
+    );
     this.currentPosition = newPos;
     this.writeUrl();
   }

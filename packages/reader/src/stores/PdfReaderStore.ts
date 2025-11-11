@@ -360,6 +360,19 @@ export class PdfReaderStore {
       }),
       () => this.updateDocumentTitle(),
     );
+
+    // Set up reaction to clear preventUrlWrite when restoration completes
+    reaction(
+      () => this.restoration.phase,
+      (phase) => {
+        if (phase === "complete") {
+          console.log(
+            "[PdfReaderStore] Restoration complete, enabling URL writes",
+          );
+          this.preventUrlWrite = false;
+        }
+      },
+    );
   }
 
   /**
@@ -1788,16 +1801,6 @@ export class PdfReaderStore {
       this.setPosition(position);
       this.lastPositionUpdateTime = now;
     }
-  }
-
-  /**
-   * Finish initial page restoration
-   * Called by render-completion callback or by timeout
-   */
-  finishInitialRestore() {
-    this.restoration.complete();
-    // Re-enable URL writes now that restoration is complete
-    this.preventUrlWrite = false;
   }
 
   /**

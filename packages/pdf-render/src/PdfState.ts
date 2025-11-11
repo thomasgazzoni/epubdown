@@ -81,6 +81,47 @@ export class PdfStateStore {
     this.markAllFullBitmapsStale();
   }
 
+  /**
+   * Set viewport-based zoom: all pages target the same CSS width
+   * @param containerCssWidth Container width in CSS pixels
+   * @param zoomPercent Zoom fraction (1.0 = 100%, 0.75 = 75%, etc.)
+   */
+  setViewportZoom(containerCssWidth: number, zoomPercent: number) {
+    for (const page of this.pages.values()) {
+      if (!(page.wPt && page.hPt)) continue;
+      const targetCssW = Math.max(
+        1,
+        Math.round(containerCssWidth * zoomPercent),
+      );
+      const effectivePpi = (targetCssW * 72) / page.wPt;
+      this.updatePixelDimensionsWithPpi(page, effectivePpi);
+    }
+    this.markAllFullBitmapsStale();
+  }
+
+  /**
+   * Update pixel dimensions for a page using a specific PPI
+   * @param page Page data to update
+   * @param effectivePpi PPI to use for this page
+   */
+  private updatePixelDimensionsWithPpi(page: PageData, effectivePpi: number) {
+    if (!page.wPt || !page.hPt) return;
+
+    const renderPpi = effectivePpi * this.devicePixelRatio;
+    page.wPx = Math.max(1, Math.floor((page.wPt * renderPpi) / 72));
+    page.hPx = Math.max(1, Math.floor((page.hPt * renderPpi) / 72));
+
+    // Clamp to GPU limits
+    const MAX_SIDE = 16384;
+    const s = Math.min(1, MAX_SIDE / page.wPx, MAX_SIDE / page.hPx);
+    if (s < 1) {
+      page.wPx = Math.floor(page.wPx * s);
+      page.hPx = Math.floor(page.hPx * s);
+    }
+
+    this.updateCssDimensions(page);
+  }
+
   setDevicePixelRatio(dpr: number) {
     this.devicePixelRatio = dpr;
     // DPR now affects *pixel* dims; recompute both pixel & CSS sizes

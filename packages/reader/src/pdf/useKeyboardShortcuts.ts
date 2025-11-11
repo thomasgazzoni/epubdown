@@ -1,6 +1,6 @@
 import { useEffect, type RefObject } from "react";
 import type { PdfReaderStore } from "../stores/PdfReaderStore";
-import { ZOOM_PPI_LEVELS } from "./pdfConstants";
+import { ZOOM_PERCENT_LEVELS } from "./pdfConstants";
 
 interface UseKeyboardShortcutsOptions {
   store: PdfReaderStore;
@@ -49,12 +49,8 @@ export function useKeyboardShortcuts({
         case "=": {
           // Zoom in
           e.preventDefault();
-          if (!containerRef.current) return;
           const position = calculateCurrentPosition();
-          const containerWidth = containerRef.current.clientWidth;
-          const dpr = window.devicePixelRatio || 1;
-          const maxPpi = store.getMaxPpi(containerWidth, dpr);
-          store.zoomIn(position, ZOOM_PPI_LEVELS, maxPpi);
+          store.zoomIn(position, ZOOM_PERCENT_LEVELS);
           break;
         }
         case "-":
@@ -62,7 +58,7 @@ export function useKeyboardShortcuts({
           // Zoom out
           e.preventDefault();
           const position = calculateCurrentPosition();
-          store.zoomOut(position, ZOOM_PPI_LEVELS);
+          store.zoomOut(position, ZOOM_PERCENT_LEVELS);
           break;
         }
         case "0": {
@@ -76,11 +72,8 @@ export function useKeyboardShortcuts({
         case "F": {
           // Fit to width
           e.preventDefault();
-          if (!containerRef.current) return;
-          const cssWidth = containerRef.current.clientWidth;
           const position = calculateCurrentPosition();
-          const dpr = window.devicePixelRatio || 1;
-          store.fitToWidth(cssWidth, position, dpr);
+          store.fitToWidth(position);
           break;
         }
         case "Home": {

@@ -8,7 +8,7 @@ import {
   type FC,
 } from "react";
 import type { PdfReaderStore } from "../stores/PdfReaderStore";
-import { ZOOM_PPI_LEVELS } from "./pdfConstants";
+import { ZOOM_PERCENT_LEVELS } from "./pdfConstants";
 import { useKeyboardShortcuts } from "./useKeyboardShortcuts";
 import { PageSlider } from "../slider/PageSlider";
 import { PageSlotWrapper } from "./PageSlot";
@@ -64,35 +64,29 @@ const ZoomControlsObserver: FC<{
     return Math.max(0, Math.min(1, offset / h));
   }, [store, containerRef]);
 
-  // Calculate the fit-to-width PPI as max zoom
-  const maxPpi =
-    containerWidth > 0
-      ? store.getMaxPpi(containerWidth, store.devicePixelRatio)
-      : 192;
-
   return (
     <div className="fixed bottom-4 left-4 z-10 bg-white rounded-lg shadow px-2 py-2 flex items-center gap-2">
       <button
         onClick={() => {
           const position = calculateCurrentPosition();
-          store.zoomOut(position, ZOOM_PPI_LEVELS);
+          store.zoomOut(position, ZOOM_PERCENT_LEVELS);
         }}
-        disabled={!store.canZoomOut(ZOOM_PPI_LEVELS)}
+        disabled={!store.canZoomOut(ZOOM_PERCENT_LEVELS)}
         className="px-3 py-1 rounded text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-100"
       >
         −
       </button>
 
       <span className="text-sm text-gray-600 min-w-[60px] text-center">
-        {Math.round((store.ppi / 96) * 100)}%
+        {Math.round(store.zoomPercent * 100)}%
       </span>
 
       <button
         onClick={() => {
           const position = calculateCurrentPosition();
-          store.zoomIn(position, ZOOM_PPI_LEVELS, maxPpi);
+          store.zoomIn(position, ZOOM_PERCENT_LEVELS);
         }}
-        disabled={!store.canZoomIn(ZOOM_PPI_LEVELS, maxPpi)}
+        disabled={!store.canZoomIn(ZOOM_PERCENT_LEVELS)}
         className="px-3 py-1 rounded text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-100"
       >
         +
@@ -101,11 +95,7 @@ const ZoomControlsObserver: FC<{
       <button
         onClick={() => {
           const position = calculateCurrentPosition();
-          const cssWidth = containerRef.current?.clientWidth ?? 0;
-          const dpr = window.devicePixelRatio || 1;
-          if (cssWidth > 0) {
-            store.fitToWidth(cssWidth, position, dpr);
-          }
+          store.fitToWidth(position);
         }}
         className="ml-1 px-2 py-1 rounded text-xs font-medium hover:bg-gray-100"
         title="Fit page width to container"
@@ -254,6 +244,13 @@ export const PdfViewer = observer(({ store }: PdfViewerProps) => {
     slotRefs.current.length = store.pageCount;
   }, [store.pageCount]);
 
+  // Apply initial viewport zoom when pages are loaded
+  useEffect(() => {
+    if (store.pageCount > 0 && containerWidth > 0) {
+      store.applyViewportZoom(containerWidth);
+    }
+  }, [store, store.pageCount, containerWidth]);
+
   // Track container width for zoom calculations
   useEffect(() => {
     if (!containerRef.current) return;
@@ -262,6 +259,11 @@ export const PdfViewer = observer(({ store }: PdfViewerProps) => {
       for (const entry of entries) {
         const width = entry.contentRect.width;
         setContainerWidth(width);
+
+        // Apply viewport zoom when container width changes
+        if (width > 0 && store.pageCount > 0) {
+          store.applyViewportZoom(width);
+        }
       }
     });
 
@@ -270,7 +272,7 @@ export const PdfViewer = observer(({ store }: PdfViewerProps) => {
     return () => {
       resizeObserver.disconnect();
     };
-  }, []);
+  }, [store]);
 
   // Auto-focus container on mount so keyboard shortcuts work immediately
   useEffect(() => {

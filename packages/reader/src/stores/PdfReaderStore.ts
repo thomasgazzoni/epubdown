@@ -98,10 +98,14 @@ export class PdfReaderStore {
   pageCount = 0;
   // Current page number (1-based), fully observable for MobX reactivity
   currentPage = 1;
-  // PPI (pixels per inch) - user zoom level
+  // PPI (pixels per inch) - legacy zoom level (for manualPpi mode)
   ppi = 96;
-  // Zoom mode: manual or fit-to-width
-  zoomMode: "manual" | "fit" = "manual";
+  // Zoom mode: manualPpi (fixed PPI) or viewportPercent (% of screen width)
+  zoomMode: "manualPpi" | "viewportPercent" = "viewportPercent";
+  // Zoom percent for viewportPercent mode (1.0 = 100%, 0.75 = 75%, etc.)
+  zoomPercent = 1.0;
+  // Last container width used for viewport zoom calculations
+  private lastContainerWidth = 0;
   //
   maxPageWidth = 0;
 
@@ -278,11 +282,18 @@ export class PdfReaderStore {
   private getEffectivePpi(pageNum: number): number {
     // Get page dimensions
     const pageData = this.docState.getPageData(pageNum);
-    if (!pageData?.wPt || !pageData?.hPt) {
+    if (!pageData?.wPt || !pageData?.hPt || !pageData?.wCss) {
       return this.ppi; // fallback
     }
 
-    // Clamp requested PPI based on page size
+    // In viewport mode, calculate PPI from target CSS width
+    if (this.zoomMode === "viewportPercent" && this.lastContainerWidth > 0) {
+      const targetCssW = this.lastContainerWidth * this.zoomPercent;
+      const effectivePpi = (targetCssW * 72) / pageData.wPt;
+      return this.clampPpiForPage(pageData.wPt, pageData.hPt, effectivePpi);
+    }
+
+    // Legacy manual PPI mode
     return this.clampPpiForPage(pageData.wPt, pageData.hPt, this.ppi);
   }
 
@@ -1239,37 +1250,37 @@ export class PdfReaderStore {
   }
 
   /**
+   * Apply viewport-based zoom to all pages
+   * @param containerWidth Container width in CSS pixels
+   */
+  applyViewportZoom(containerWidth: number) {
+    if (containerWidth <= 0) return;
+    this.lastContainerWidth = containerWidth;
+    this.docState.setViewportZoom(containerWidth, this.zoomPercent);
+  }
+
+  /**
    * Zoom in to next level
    */
-  zoomIn(currentPosition: number, zoomLevels: number[], maxPpi: number) {
+  zoomIn(currentPosition: number, zoomLevels: number[]) {
     this.setPendingScrollRestore(this.currentPage, currentPosition);
-    this.zoomMode = "manual";
-    let currentZoomIndex = zoomLevels.indexOf(this.ppi);
-    if (currentZoomIndex === -1) {
-      currentZoomIndex = zoomLevels.findIndex((p) => p > this.ppi);
-      if (currentZoomIndex === -1) currentZoomIndex = zoomLevels.length - 1;
-      else currentZoomIndex--;
-    }
-    const newIndex = Math.min(zoomLevels.length - 1, currentZoomIndex + 1);
-    let newPpi = zoomLevels[newIndex];
 
-    // If we're at the last standard level and maxPpi is higher, zoom to maxPpi
-    const lastStandardPpi = zoomLevels[zoomLevels.length - 1] ?? 192;
-    if (
-      newPpi &&
-      newPpi === lastStandardPpi &&
-      this.ppi >= lastStandardPpi &&
-      maxPpi > lastStandardPpi
-    ) {
-      newPpi = maxPpi;
+    // Find current zoom level
+    let currentIndex = zoomLevels.findIndex(
+      (z) => Math.abs(z - this.zoomPercent) < 0.01,
+    );
+    if (currentIndex === -1) {
+      // Not at a standard level, find next level up
+      currentIndex = zoomLevels.findIndex((z) => z > this.zoomPercent);
+      if (currentIndex === -1) currentIndex = zoomLevels.length - 1;
+      else currentIndex--;
     }
 
-    // Limit to fit width PPI
-    if (newPpi && newPpi > maxPpi) {
-      newPpi = maxPpi;
-    }
-    if (newPpi && newPpi !== this.ppi) {
-      this.setPpi(newPpi);
+    const newIndex = Math.min(zoomLevels.length - 1, currentIndex + 1);
+    const newZoom = zoomLevels[newIndex];
+
+    if (newZoom && Math.abs(newZoom - this.zoomPercent) > 0.01) {
+      this.setZoomPercent(newZoom);
     }
   }
 
@@ -1278,65 +1289,79 @@ export class PdfReaderStore {
    */
   zoomOut(currentPosition: number, zoomLevels: number[]) {
     this.setPendingScrollRestore(this.currentPage, currentPosition);
-    this.zoomMode = "manual";
-    let currentZoomIndex = zoomLevels.indexOf(this.ppi);
-    if (currentZoomIndex === -1) {
-      currentZoomIndex = zoomLevels.findIndex((p) => p >= this.ppi);
-      if (currentZoomIndex === -1) currentZoomIndex = zoomLevels.length;
+
+    // Find current zoom level
+    let currentIndex = zoomLevels.findIndex(
+      (z) => Math.abs(z - this.zoomPercent) < 0.01,
+    );
+    if (currentIndex === -1) {
+      // Not at a standard level, find next level down
+      currentIndex = zoomLevels.findIndex((z) => z >= this.zoomPercent);
+      if (currentIndex === -1) currentIndex = zoomLevels.length;
     }
-    const newIndex = Math.max(0, currentZoomIndex - 1);
-    const newPpi = zoomLevels[newIndex];
-    if (newPpi && newPpi !== this.ppi) {
-      this.setPpi(newPpi);
+
+    const newIndex = Math.max(0, currentIndex - 1);
+    const newZoom = zoomLevels[newIndex];
+
+    if (newZoom && Math.abs(newZoom - this.zoomPercent) > 0.01) {
+      this.setZoomPercent(newZoom);
     }
   }
 
   /**
-   * Reset zoom to 100% (96 PPI)
+   * Reset zoom to 100% (fit to container width)
    */
   resetZoom(currentPosition: number) {
     this.setPendingScrollRestore(this.currentPage, currentPosition);
-    this.zoomMode = "manual";
-    if (this.ppi !== 96) {
-      this.setPpi(96);
+    if (Math.abs(this.zoomPercent - 1.0) > 0.01) {
+      this.setZoomPercent(1.0);
     }
   }
 
   /**
-   * Fit current page to container width
+   * Fit current page to container width (same as 100% in viewport mode)
    */
-  fitToWidth(
-    containerWidth: number,
-    currentPosition: number,
-    devicePixelRatio: number,
-  ) {
+  fitToWidth(currentPosition: number) {
     this.setPendingScrollRestore(this.currentPage, currentPosition);
-    this.zoomMode = "fit";
-
-    const ppiFit = this.getMaxPpi(containerWidth, devicePixelRatio);
-
-    if (ppiFit !== this.ppi) {
-      this.setPpi(ppiFit);
+    // In viewport mode, fit = 100% = 1.0
+    if (Math.abs(this.zoomPercent - 1.0) > 0.01) {
+      this.setZoomPercent(1.0);
     }
   }
 
   /**
    * Check if zoom in is possible
    */
-  canZoomIn(zoomLevels: number[], maxPpi: number): boolean {
-    return this.ppi < maxPpi;
+  canZoomIn(zoomLevels: number[]): boolean {
+    const maxZoom = zoomLevels[zoomLevels.length - 1] ?? 2.0;
+    return this.zoomPercent < maxZoom - 0.01;
   }
 
   /**
    * Check if zoom out is possible
    */
   canZoomOut(zoomLevels: number[]): boolean {
-    const i = zoomLevels.indexOf(this.ppi);
-    if (i === -1) {
-      // Not at a standard level, check if we can zoom out
-      return this.ppi > (zoomLevels[0] ?? 72);
+    const minZoom = zoomLevels[0] ?? 0.5;
+    return this.zoomPercent > minZoom + 0.01;
+  }
+
+  /**
+   * Set zoom percent and apply viewport zoom
+   * @param zoomPercent Zoom fraction (1.0 = 100%, 0.75 = 75%, etc.)
+   */
+  setZoomPercent(zoomPercent: number) {
+    if (Math.abs(zoomPercent - this.zoomPercent) < 0.01) return;
+    this.zoomPercent = zoomPercent;
+
+    // Apply viewport zoom if we have container width
+    if (this.lastContainerWidth > 0) {
+      this.applyViewportZoom(this.lastContainerWidth);
+      // Mark all full bitmaps as stale - keep displaying them until upgrades arrive
+      this.markZoomStale();
+      // Cancel pending renders (generation token will prevent old results)
+      this.cancelAll();
+      this.triggerRender();
     }
-    return i > 0;
   }
 
   /**
@@ -1565,8 +1590,15 @@ export class PdfReaderStore {
     this.docState.setDevicePixelRatio(dpr);
     // Mark all full bitmaps as stale before recalculating dimensions
     this.markZoomStale();
-    // Recalculate dimensions with new DPR
-    this.recalculateDimensions();
+
+    // Reapply zoom based on mode
+    if (this.zoomMode === "viewportPercent" && this.lastContainerWidth > 0) {
+      this.applyViewportZoom(this.lastContainerWidth);
+    } else {
+      // Legacy manual PPI mode
+      this.recalculateDimensions();
+    }
+
     // Trigger re-render with new DPR
     this.triggerRender();
   }

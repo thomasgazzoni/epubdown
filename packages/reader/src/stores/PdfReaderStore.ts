@@ -1795,17 +1795,8 @@ export class PdfReaderStore {
    */
   private lastPositionUpdateTime = 0;
   updatePositionFromScroll(getPosition: () => number) {
-    console.log(
-      "[PdfReaderStore] updatePositionFromScroll called",
-      this.currentPage,
-      this.restoration.phase,
-    );
-
     // Don't update position/URL until initial restoration is complete
     if (this.restoration.shouldBlockUpdates) {
-      console.log(
-        "[PdfReaderStore] Blocking position update during restoration",
-      );
       return;
     }
 

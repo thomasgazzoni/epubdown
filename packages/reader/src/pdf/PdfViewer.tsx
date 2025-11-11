@@ -447,7 +447,9 @@ export const PdfViewer = observer(({ store }: PdfViewerProps) => {
   useEffect(() => {
     if (typeof window === "undefined") return;
     if (!containerRef.current) return;
-    if (store.pageCount === 0) return;
+    // NOTE: Don't check pageCount here! The event listener works regardless of whether pages are loaded.
+    // Checking pageCount causes the effect to wait, then when pages load, the effect re-runs
+    // but containerRef might be null at that moment due to React's rendering cycle.
 
     const container = containerRef.current;
     let rafIdForDpr: number | null = null;
@@ -508,8 +510,11 @@ export const PdfViewer = observer(({ store }: PdfViewerProps) => {
   }, [
     store,
     calculateCurrentPosition,
-    store.pageCount,
-    store.restoration.phase,
+    // NOTE: Do NOT add store.pageCount or store.restoration.phase here!
+    // The scroll event listener doesn't depend on these values - it works regardless.
+    // Adding them causes the effect to re-run when they change, which can lead to
+    // race conditions where containerRef is unavailable during the re-run.
+    // Restoration state is already handled inside store.updatePositionFromScroll()
   ]);
 
   // ═══════════════════════════════════════════════════════════════

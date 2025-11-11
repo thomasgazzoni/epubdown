@@ -857,6 +857,25 @@ export class PdfReaderStore {
   }
 
   /**
+   * Invalidate the current window (current page ± 1) after zoom/DPR change
+   * This forces these pages to be re-rendered with new dimensions.
+   *
+   * More explicit than relying on "stale" status alone - directly tells
+   * the render system these pages need fresh bitmaps.
+   */
+  private invalidateCurrentWindow() {
+    const start = Math.max(1, this.currentPage - 1);
+    const end = Math.min(this.pageCount, this.currentPage + 1);
+
+    for (let page = start; page <= end; page++) {
+      // Mark as not having full bitmap (forces re-render)
+      this.docState.setPageHasFull(page, false);
+      // Reset status to idle (ready for rendering)
+      this.docState.setPageStatus(page, "idle");
+    }
+  }
+
+  /**
    * Clear all canvases (e.g., when PPI changes) - legacy fallback
    */
   private clearAllCanvases() {
@@ -1431,10 +1450,16 @@ export class PdfReaderStore {
 
     // Apply viewport zoom if we have container width
     if (this.lastContainerWidth > 0) {
+      // 1) Recompute CSS/pixel sizes (also marks pages stale inside PdfState)
       this.applyViewportZoom(this.lastContainerWidth);
-      // Mark all full bitmaps as stale - keep displaying them until upgrades arrive
+
+      // 2) Explicitly invalidate visible window to force re-render
+      this.invalidateCurrentWindow();
+
+      // 3) Mark all bitmaps stale (for background pages)
       this.markZoomStale();
-      // Cancel pending renders (generation token will prevent old results)
+
+      // 4) Drop old tasks and requeue current ±1
       this.cancelAll();
       this.triggerRender();
     }
@@ -1644,6 +1669,9 @@ export class PdfReaderStore {
     if (this.lastContainerWidth > 0) {
       this.applyViewportZoom(this.lastContainerWidth);
     }
+
+    // Explicitly invalidate visible window to force re-render at new DPR
+    this.invalidateCurrentWindow();
 
     // Trigger re-render with new DPR (only if dimensions changed)
     this.triggerRender();

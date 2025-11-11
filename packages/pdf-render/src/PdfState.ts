@@ -35,7 +35,6 @@ export interface PageData {
   renderEndTs?: number;
   renderDurationMs?: number;
   // Bitmap tracking
-  hasThumb?: boolean; // Has low-res persistent bitmap
   hasFull?: boolean; // Has full-res bitmap at current PPI
 }
 
@@ -159,14 +158,6 @@ export class PdfStateStore {
     if (page.renderStartTs) {
       page.renderDurationMs = page.renderEndTs - page.renderStartTs;
     }
-  }
-
-  /**
-   * Mark page as having thumb bitmap
-   */
-  setPageHasThumb(pageNum: number, hasThumb: boolean) {
-    const page = this.getOrCreatePage(pageNum);
-    page.hasThumb = hasThumb;
   }
 
   /**

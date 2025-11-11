@@ -1,7 +1,7 @@
+import type { PageData } from "@epubdown/pdf-render";
 import { observer } from "mobx-react-lite";
 import type React from "react";
-import { useEffect, useRef, useState, memo } from "react";
-import type { PageData } from "@epubdown/pdf-render";
+import { memo, useEffect, useRef, useState } from "react";
 import type { PdfReaderStore } from "../stores/PdfReaderStore";
 
 /**
@@ -39,7 +39,7 @@ const CanvasHost: React.FC<{
 
     // Check if bitmap/canvas actually changed (not just re-rendered)
     // This prevents loading overlay from flashing when PageSlotWrapper re-renders
-    // with the same cached bitmap (e.g., during scroll when hasThumb/hasFull updates)
+    // with the same cached bitmap (e.g., during scroll when hasFull updates)
     const bitmapChanged = bitmap !== prevBitmapRef.current;
     const canvasChanged = canvas !== prevCanvasRef.current;
     prevBitmapRef.current = bitmap;
@@ -203,11 +203,10 @@ export const PageSlotWrapper = observer(
   }) => {
     // Access observable flags to create MobX dependencies
     // This causes this wrapper to re-render when bitmaps become available
-    void pageData.hasThumb;
     void pageData.hasFull;
 
     // Fetch bitmap and canvas from store (these Maps are non-observable)
-    // But since this component re-renders when hasThumb/hasFull change,
+    // But since this component re-renders when hasFull changes,
     // we'll fetch the updated bitmap/canvas values
     const bitmap = store.getBitmapForPage(pageData.pageNumber);
     const canvas = store.getPageCanvas(pageData.pageNumber);

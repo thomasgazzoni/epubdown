@@ -37,7 +37,6 @@ export const PdfDebugOverlay = observer(
     // Memory stats (polled because they're non-observable)
     const [bitmapMB, setBitmapMB] = useState(0);
     const [canvasMB, setCanvasMB] = useState(0);
-    const [thumbCount, setThumbCount] = useState(0);
     const [fullBitmapCount, setFullBitmapCount] = useState(0);
 
     // FPS counter
@@ -76,7 +75,6 @@ export const PdfDebugOverlay = observer(
             (store.canvasBytes - store.bitmapMemoryBytes) / 1024 / 1024,
           ),
         );
-        setThumbCount(store.thumbCount);
         setFullBitmapCount(store.fullBitmapCount);
       };
 
@@ -176,8 +174,7 @@ export const PdfDebugOverlay = observer(
                 <div className="flex justify-between text-gray-400">
                   <span>Bitmaps:</span>
                   <span className="text-white">
-                    {bitmapMB.toFixed(1)} MB ({fullBitmapCount} full +{" "}
-                    {thumbCount} thumb)
+                    {bitmapMB.toFixed(1)} MB ({fullBitmapCount} full)
                   </span>
                 </div>
                 <div className="flex justify-between text-gray-400">

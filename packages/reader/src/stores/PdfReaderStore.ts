@@ -549,8 +549,6 @@ export class PdfReaderStore {
     const position = Number(url.searchParams.get("position")) || 0;
     const zoom = Number(url.searchParams.get("zoom")) || 0;
 
-    console.log("[PdfReaderStore] parseUrlParams", { page, position, zoom });
-
     // Set up restoration if page > 1 or position > 0
     if (page > 1 || position > 0) {
       runInAction(() => {
@@ -571,6 +569,11 @@ export class PdfReaderStore {
 
   async load(bookId: number) {
     this.dispose();
+
+    // Parse URL params after dispose to preserve restoration state
+    // This must happen after dispose() which resets restoration state
+    this.parseUrlParams();
+
     runInAction(() => {
       this.isLoading = true;
       this.error = null;
@@ -1735,19 +1738,9 @@ export class PdfReaderStore {
    * - Could extract to separate URLSyncService
    */
   writeUrl() {
-    if (typeof window === "undefined") {
-      console.log("[PdfReaderStore] writeUrl: skipping (no window)");
-      return;
-    }
+    if (typeof window === "undefined") return;
     // Don't write URL during initial restoration to prevent flickering
-    if (this.preventUrlWrite) {
-      console.log(
-        "[PdfReaderStore] writeUrl: skipping (preventUrlWrite=true, restoration.phase=" +
-          this.restoration.phase +
-          ")",
-      );
-      return;
-    }
+    if (this.preventUrlWrite) return;
 
     const positionStr = this.currentPosition.toFixed(3);
     const zoomValue = this.zoomPercent.toFixed(3);
@@ -1764,13 +1757,9 @@ export class PdfReaderStore {
       this.lastUrlState.zoom === newState.zoom &&
       this.lastUrlState.position === newState.position
     ) {
-      console.log("[PdfReaderStore] writeUrl: skipping (no state change)");
       return;
     }
 
-    console.log(
-      `[PdfReaderStore] writeUrl: page=${newState.page}, zoom=${newState.zoom}, position=${newState.position}`,
-    );
     this.lastUrlState = newState;
     const url = new URL(window.location.href);
     url.searchParams.set("page", String(newState.page));
@@ -1781,9 +1770,6 @@ export class PdfReaderStore {
 
   setPosition(position: number) {
     const newPos = Math.max(0, Math.min(1, position));
-    console.log(
-      `[PdfReaderStore] setPosition: ${newPos.toFixed(3)} (currentPage=${this.currentPage})`,
-    );
     this.currentPosition = newPos;
     this.writeUrl();
   }

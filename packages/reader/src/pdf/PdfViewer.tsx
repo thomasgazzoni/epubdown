@@ -494,8 +494,9 @@ export const PdfViewer = observer(({ store }: PdfViewerProps) => {
     if (mq?.addEventListener) mq.addEventListener("change", mqListener);
     else if ((mq as any)?.addListener) (mq as any).addListener(mqListener);
 
-    // Trigger initial position update (only after restoration completes)
-    store.updatePositionFromScroll(calculateCurrentPosition);
+    // NOTE: Do NOT call store.updatePositionFromScroll here!
+    // That would write to the URL before parseUrlParams() is called, overwriting the initial URL.
+    // The position will be updated naturally via scroll events after restoration completes.
 
     return () => {
       if (rafIdForDpr !== null) {

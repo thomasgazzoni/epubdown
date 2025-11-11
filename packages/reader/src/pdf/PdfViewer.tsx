@@ -249,15 +249,18 @@ export const PdfViewer = observer(({ store }: PdfViewerProps) => {
       return 0;
     }
 
-    // Use offsetTop to avoid layout thrashing from getBoundingClientRect
-    const top = slot.offsetTop - container.scrollTop;
-    const offset = -top;
+    // Calculate position based on viewport center, not page top
+    // This handles cases where "current page" top is still below viewport
+    const viewportCenter = container.clientHeight / 2;
+    const slotTopRelativeToViewport = slot.offsetTop - container.scrollTop;
+    const distanceFromSlotTopToCenter =
+      viewportCenter - slotTopRelativeToViewport;
     const h = slot.offsetHeight || 1;
 
-    // Return as ratio, clamped to [0, 1]
-    const position = Math.max(0, Math.min(1, offset / h));
+    // Position is where viewport center is within the page (0.0 = page top, 1.0 = page bottom)
+    const position = Math.max(0, Math.min(1, distanceFromSlotTopToCenter / h));
     console.log(
-      `[PdfViewer] calculateCurrentPosition: page=${pageNum}, top=${top.toFixed(1)}, offset=${offset.toFixed(1)}, h=${h.toFixed(1)}, position=${position.toFixed(3)}`,
+      `[PdfViewer] calculateCurrentPosition: page=${pageNum}, slotTop=${slotTopRelativeToViewport.toFixed(1)}, viewportCenter=${viewportCenter.toFixed(1)}, h=${h.toFixed(1)}, position=${position.toFixed(3)}`,
     );
     return position;
   }, [store]); // Removed store.currentPage from deps for stable callback

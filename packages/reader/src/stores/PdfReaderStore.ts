@@ -1688,7 +1688,11 @@ export class PdfReaderStore {
   /**
    * Update position from scroll event
    * Throttled to ~10/s to reduce URL write frequency
-   * @param getPosition Callback to calculate current page and position based on viewport top
+   * @param getPosition Callback to calculate current page and position based on viewport center
+   *
+   * IMPORTANT: This only updates the URL, NOT store.currentPage!
+   * The IntersectionObserver is the single source of truth for currentPage.
+   * Updating currentPage here would create a feedback loop and cause scrolling jumps.
    */
   private lastPositionUpdateTime = 0;
   updatePositionFromScroll(
@@ -1707,16 +1711,46 @@ export class PdfReaderStore {
     if (now - this.lastPositionUpdateTime > 100) {
       const { pageNum, position } = getPosition();
 
-      // Update current page if it differs (to keep URL in sync with calculated position)
-      // This ensures the URL accurately reflects which page the viewport top is in
-      if (pageNum !== this.currentPage) {
-        this.currentPage = pageNum;
-        this.updateActiveItem();
-      }
-
-      this.setPosition(position);
+      // Update position and write URL with calculated page
+      // Note: We don't update this.currentPage here - IntersectionObserver handles that
+      this.currentPosition = Math.max(0, Math.min(1, position));
+      this.writeUrlWithPage(pageNum, position);
       this.lastPositionUpdateTime = now;
     }
+  }
+
+  /**
+   * Write URL with explicit page and position
+   * Used by scroll handler to update URL without changing store.currentPage
+   */
+  private writeUrlWithPage(page: number, position: number) {
+    if (typeof window === "undefined") return;
+    if (this.preventUrlWrite) return;
+
+    const positionStr = position.toFixed(3);
+    const zoomValue = this.zoomPercent.toFixed(3);
+    const newState = {
+      page,
+      zoom: zoomValue,
+      position: positionStr,
+    };
+
+    // Skip if nothing changed
+    if (
+      this.lastUrlState &&
+      this.lastUrlState.page === newState.page &&
+      this.lastUrlState.zoom === newState.zoom &&
+      this.lastUrlState.position === newState.position
+    ) {
+      return;
+    }
+
+    this.lastUrlState = newState;
+    const url = new URL(window.location.href);
+    url.searchParams.set("page", String(newState.page));
+    url.searchParams.set("zoom", newState.zoom);
+    url.searchParams.set("position", positionStr);
+    window.history.replaceState(null, "", url.pathname + url.search + url.hash);
   }
 
   /**

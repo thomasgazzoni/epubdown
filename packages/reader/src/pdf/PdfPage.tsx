@@ -32,8 +32,7 @@ export const PdfPage = observer(() => {
 
   useEffect(() => {
     if (match && params?.bookId) {
-      // Parse URL params before loading to set up restoration state
-      store.parseUrlParams();
+      // parseUrlParams is now called inside load() after dispose()
       void store.load(Number(params.bookId));
     }
   }, [match, params?.bookId, store]);

@@ -1,4 +1,4 @@
-import { makeAutoObservable } from "mobx";
+import { makeAutoObservable, observable } from "mobx";
 
 /**
  * Document-level state for PDF viewer
@@ -74,40 +74,101 @@ export class PdfStateStore {
   setPpi(ppi: number) {
     this.ppi = ppi;
     // Recalculate pixel dimensions for all pages
+    let anyChanged = false;
     for (const page of this.pages.values()) {
-      this.updatePixelDimensions(page);
+      anyChanged = this.updatePixelDimensions(page) || anyChanged;
     }
-    // Mark all full bitmaps as stale to ensure upgrade path
-    this.markAllFullBitmapsStale();
+    // Only mark bitmaps stale if dimensions actually changed
+    if (anyChanged) {
+      this.markAllFullBitmapsStale();
+    }
+  }
+
+  /**
+   * Set viewport-based zoom: all pages target the same CSS width
+   * @param containerCssWidth Container width in CSS pixels
+   * @param zoomPercent Zoom fraction (1.0 = 100%, 0.75 = 75%, etc.)
+   */
+  setViewportZoom(containerCssWidth: number, zoomPercent: number) {
+    let anyChanged = false;
+    for (const page of this.pages.values()) {
+      if (!(page.wPt && page.hPt)) {
+        continue;
+      }
+      const targetCssW = Math.max(
+        1,
+        Math.round(containerCssWidth * zoomPercent),
+      );
+      const effectivePpi = (targetCssW * 72) / page.wPt;
+      const changed = this.updatePixelDimensionsWithPpi(page, effectivePpi);
+      anyChanged = anyChanged || changed;
+    }
+    // Only mark bitmaps stale if dimensions actually changed
+    if (anyChanged) {
+      this.markAllFullBitmapsStale();
+    }
+  }
+
+  /**
+   * Update pixel dimensions for a page using a specific PPI
+   * @param page Page data to update
+   * @param effectivePpi PPI to use for this page
+   * @returns true if dimensions changed, false otherwise
+   */
+  private updatePixelDimensionsWithPpi(
+    page: PageData,
+    effectivePpi: number,
+  ): boolean {
+    if (!page.wPt || !page.hPt) return false;
+
+    const renderPpi = effectivePpi * this.devicePixelRatio;
+    const nextWPx = Math.max(1, Math.floor((page.wPt * renderPpi) / 72));
+    const nextHPx = Math.max(1, Math.floor((page.hPt * renderPpi) / 72));
+
+    // Clamp to GPU limits
+    const MAX_SIDE = 16384;
+    const s = Math.min(1, MAX_SIDE / nextWPx, MAX_SIDE / nextHPx);
+    const clampedW = s < 1 ? Math.floor(nextWPx * s) : nextWPx;
+    const clampedH = s < 1 ? Math.floor(nextHPx * s) : nextHPx;
+
+    // Check if dimensions actually changed
+    const changed = clampedW !== page.wPx || clampedH !== page.hPx;
+
+    page.wPx = clampedW;
+    page.hPx = clampedH;
+    this.updateCssDimensions(page);
+
+    return changed;
   }
 
   setDevicePixelRatio(dpr: number) {
     this.devicePixelRatio = dpr;
-    // DPR now affects *pixel* dims; recompute both pixel & CSS sizes
-    for (const page of this.pages.values()) {
-      this.updatePixelDimensions(page);
-    }
-    // Mark all full bitmaps as stale for crisp re-render on display change
-    this.markAllFullBitmapsStale();
+    // Note: Dimensions will be recalculated by caller via setPpi() or setViewportZoom()
+    // Don't recalculate here to avoid double-work in viewport zoom mode
   }
 
-  private updatePixelDimensions(page: PageData) {
-    if (page.wPt && page.hPt) {
-      // Compute backing pixels with DPR-aware PPI for HiDPI displays
-      const renderPpi = this.ppi * this.devicePixelRatio;
-      page.wPx = Math.max(1, Math.floor((page.wPt * renderPpi) / 72));
-      page.hPx = Math.max(1, Math.floor((page.hPt * renderPpi) / 72));
+  private updatePixelDimensions(page: PageData): boolean {
+    if (!page.wPt || !page.hPt) return false;
 
-      // Optional clamp to stay under GPU limits (prevents forced downscale)
-      const MAX_SIDE = 16384;
-      const s = Math.min(1, MAX_SIDE / page.wPx, MAX_SIDE / page.hPx);
-      if (s < 1) {
-        page.wPx = Math.floor(page.wPx * s);
-        page.hPx = Math.floor(page.hPx * s);
-      }
+    // Compute backing pixels with DPR-aware PPI for HiDPI displays
+    const renderPpi = this.ppi * this.devicePixelRatio;
+    const nextWPx = Math.max(1, Math.floor((page.wPt * renderPpi) / 72));
+    const nextHPx = Math.max(1, Math.floor((page.hPt * renderPpi) / 72));
 
-      this.updateCssDimensions(page);
-    }
+    // Optional clamp to stay under GPU limits (prevents forced downscale)
+    const MAX_SIDE = 16384;
+    const s = Math.min(1, MAX_SIDE / nextWPx, MAX_SIDE / nextHPx);
+    const clampedW = s < 1 ? Math.floor(nextWPx * s) : nextWPx;
+    const clampedH = s < 1 ? Math.floor(nextHPx * s) : nextHPx;
+
+    // Check if dimensions actually changed
+    const changed = clampedW !== page.wPx || clampedH !== page.hPx;
+
+    page.wPx = clampedW;
+    page.hPx = clampedH;
+    this.updateCssDimensions(page);
+
+    return changed;
   }
 
   private updateCssDimensions(page: PageData) {
@@ -213,10 +274,17 @@ export class PdfStateStore {
   private getOrCreatePage(pageNum: number): PageData {
     let page = this.pages.get(pageNum);
     if (!page) {
-      page = {
-        pageNumber: pageNum,
-        status: "idle",
-      };
+      // Make the page record itself observable so wCss/hCss/wPx/hPx changes
+      // re-render observers that read them.
+      page = observable.object<PageData>(
+        {
+          pageNumber: pageNum,
+          status: "idle",
+          // keep remaining fields undefined initially
+        },
+        {},
+        { deep: false }, // flat object; own props are observable
+      );
       this.pages.set(pageNum, page);
     }
     return page;

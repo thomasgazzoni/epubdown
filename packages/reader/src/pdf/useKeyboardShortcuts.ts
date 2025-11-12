@@ -1,11 +1,11 @@
 import { useEffect, type RefObject } from "react";
 import type { PdfReaderStore } from "../stores/PdfReaderStore";
-import { ZOOM_PPI_LEVELS } from "./pdfConstants";
+import { ZOOM_PERCENT_LEVELS } from "./pdfConstants";
 
 interface UseKeyboardShortcutsOptions {
   store: PdfReaderStore;
   containerRef: RefObject<HTMLDivElement | null>;
-  calculateCurrentPosition: () => number;
+  calculateCurrentPositionWithPage: () => { pageNum: number; position: number };
   onNavigateToPage: (page: number) => void;
 }
 
@@ -29,7 +29,7 @@ interface UseKeyboardShortcutsOptions {
 export function useKeyboardShortcuts({
   store,
   containerRef,
-  calculateCurrentPosition,
+  calculateCurrentPositionWithPage,
   onNavigateToPage,
 }: UseKeyboardShortcutsOptions) {
   useEffect(() => {
@@ -49,38 +49,35 @@ export function useKeyboardShortcuts({
         case "=": {
           // Zoom in
           e.preventDefault();
-          if (!containerRef.current) return;
-          const position = calculateCurrentPosition();
-          const containerWidth = containerRef.current.clientWidth;
-          const dpr = window.devicePixelRatio || 1;
-          const maxPpi = store.getMaxPpi(containerWidth, dpr);
-          store.zoomIn(position, ZOOM_PPI_LEVELS, maxPpi);
+          const { pageNum, position } = calculateCurrentPositionWithPage();
+          store.setPendingScrollRestore(pageNum, position);
+          store.zoomIn(ZOOM_PERCENT_LEVELS);
           break;
         }
         case "-":
         case "_": {
           // Zoom out
           e.preventDefault();
-          const position = calculateCurrentPosition();
-          store.zoomOut(position, ZOOM_PPI_LEVELS);
+          const { pageNum, position } = calculateCurrentPositionWithPage();
+          store.setPendingScrollRestore(pageNum, position);
+          store.zoomOut(ZOOM_PERCENT_LEVELS);
           break;
         }
         case "0": {
           // Reset to 100%
           e.preventDefault();
-          const position = calculateCurrentPosition();
-          store.resetZoom(position);
+          const { pageNum, position } = calculateCurrentPositionWithPage();
+          store.setPendingScrollRestore(pageNum, position);
+          store.resetZoom();
           break;
         }
         case "f":
         case "F": {
           // Fit to width
           e.preventDefault();
-          if (!containerRef.current) return;
-          const cssWidth = containerRef.current.clientWidth;
-          const position = calculateCurrentPosition();
-          const dpr = window.devicePixelRatio || 1;
-          store.fitToWidth(cssWidth, position, dpr);
+          const { pageNum, position } = calculateCurrentPositionWithPage();
+          store.setPendingScrollRestore(pageNum, position);
+          store.fitToWidth();
           break;
         }
         case "Home": {
@@ -131,5 +128,5 @@ export function useKeyboardShortcuts({
     return () => {
       container.removeEventListener("keydown", handleKeyDown);
     };
-  }, [store, containerRef, calculateCurrentPosition, onNavigateToPage]);
+  }, [store, containerRef, calculateCurrentPositionWithPage, onNavigateToPage]);
 }

@@ -1,7 +1,7 @@
 import type { PageData } from "@epubdown/pdf-render";
 import { observer } from "mobx-react-lite";
 import type React from "react";
-import { memo, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { PdfReaderStore } from "../stores/PdfReaderStore";
 
 /**
@@ -84,7 +84,9 @@ const CanvasHost: React.FC<{
       const targetW = Math.max(1, Math.round(width * dpr));
       const targetH = Math.max(1, Math.round(height * dpr));
 
-      if (bmCanvas.width !== targetW || bmCanvas.height !== targetH) {
+      const sizeChanged =
+        bmCanvas.width !== targetW || bmCanvas.height !== targetH;
+      if (sizeChanged) {
         bmCanvas.width = targetW;
         bmCanvas.height = targetH;
         bmCanvas.style.width = `${width}px`;
@@ -93,7 +95,7 @@ const CanvasHost: React.FC<{
 
       // Update canvas content when bitmap changes or size changes
       const ctx2d = bmCanvas.getContext("2d");
-      if (ctx2d && bitmapChanged) {
+      if (ctx2d && (bitmapChanged || sizeChanged)) {
         ctx2d.imageSmoothingEnabled = true; // default; keep text crisp
         ctx2d.clearRect(0, 0, targetW, targetH);
         // Draw bitmap scaled to device pixels for crisp rendering
@@ -105,8 +107,8 @@ const CanvasHost: React.FC<{
         ctx2d.drawImage(bitmap, 0, 0, targetW, targetH);
       }
 
-      // Only show loading overlay if bitmap actually changed
-      if (bitmapChanged) {
+      // Only show loading overlay if we actually need a repaint
+      if (bitmapChanged || sizeChanged) {
         setIsContentReady(false);
         mount(bmCanvas, () => {
           // Use double RAF to ensure canvas is actually painted
@@ -117,7 +119,7 @@ const CanvasHost: React.FC<{
           });
         });
       } else {
-        // Same bitmap, just ensure it's mounted (already ready)
+        // Same bitmap/size, just ensure it's mounted (already ready)
         mount(bmCanvas, () => setIsContentReady(true));
       }
       currentCanvasRef.current = null;
@@ -291,9 +293,9 @@ const PageSlotComponent = observer(
 );
 
 /**
- * Memoized PageSlot to prevent re-renders when props haven't changed.
- * This is critical for scroll performance - without memo, PageSlot re-renders
- * every time PageSlotWrapper re-renders (due to MobX reactivity), even if
- * the bitmap/canvas refs are the same.
+ * Export PageSlotComponent as PageSlot.
+ * Note: We don't wrap in memo() because observer() components are already
+ * efficient and memo() would block MobX reactivity when observable properties
+ * change (since the pageData object reference stays the same).
  */
-export const PageSlot = memo(PageSlotComponent);
+export const PageSlot = PageSlotComponent;

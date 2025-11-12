@@ -8,7 +8,7 @@ import {
   type FC,
 } from "react";
 import type { PdfReaderStore } from "../stores/PdfReaderStore";
-import { ZOOM_PPI_LEVELS } from "./pdfConstants";
+import { ZOOM_PERCENT_LEVELS } from "./pdfConstants";
 import { useKeyboardShortcuts } from "./useKeyboardShortcuts";
 import { PageSlider } from "../slider/PageSlider";
 import { PageSlotWrapper } from "./PageSlot";
@@ -42,90 +42,71 @@ const PageSliderObserver: FC<{
  */
 const ZoomControlsObserver: FC<{
   store: PdfReaderStore;
-  containerRef: React.RefObject<HTMLDivElement | null>;
-  containerWidth: number;
-}> = observer(({ store, containerRef, containerWidth }) => {
-  // Calculate position within current page
-  const calculateCurrentPosition = useCallback((): number => {
-    if (!containerRef.current) return 0;
+  calculateCurrentPositionWithPage: () => { pageNum: number; position: number };
+  getContentWidth: () => number;
+}> = observer(
+  ({ store, calculateCurrentPositionWithPage, getContentWidth }) => {
+    return (
+      <div className="fixed bottom-4 left-4 z-10 bg-white rounded-lg shadow px-2 py-2 flex items-center gap-2">
+        <button
+          onClick={() => {
+            const { pageNum, position } = calculateCurrentPositionWithPage();
+            const width = getContentWidth();
+            store.setPendingScrollRestore(pageNum, position);
+            store.zoomOut(ZOOM_PERCENT_LEVELS, width);
+          }}
+          disabled={!store.canZoomOut(ZOOM_PERCENT_LEVELS)}
+          className="px-3 py-1 rounded text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-100"
+        >
+          −
+        </button>
 
-    const pageNum = store.currentPage;
-    const container = containerRef.current;
-    const slots = container.querySelectorAll(".pdf-page-slot");
-    const slot = slots[pageNum - 1] as HTMLElement | undefined;
-    if (!slot) return 0;
+        <span className="text-sm text-gray-600 min-w-[60px] text-center">
+          {Math.round(store.zoomPercent * 100)}%
+        </span>
 
-    // Use offsetTop to avoid layout thrashing from getBoundingClientRect
-    const top = slot.offsetTop - container.scrollTop;
-    const offset = -top;
-    const h = slot.offsetHeight || 1;
+        <button
+          onClick={() => {
+            const { pageNum, position } = calculateCurrentPositionWithPage();
+            const width = getContentWidth();
+            store.setPendingScrollRestore(pageNum, position);
+            store.zoomIn(ZOOM_PERCENT_LEVELS, width);
+          }}
+          disabled={!store.canZoomIn(ZOOM_PERCENT_LEVELS)}
+          className="px-3 py-1 rounded text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-100"
+        >
+          +
+        </button>
 
-    // Return as ratio, clamped to [0, 1]
-    return Math.max(0, Math.min(1, offset / h));
-  }, [store, containerRef]);
+        <button
+          onClick={() => {
+            const { pageNum, position } = calculateCurrentPositionWithPage();
+            const width = getContentWidth();
+            store.setPendingScrollRestore(pageNum, position);
+            store.fitToWidth(width);
+          }}
+          className="ml-1 px-2 py-1 rounded text-xs font-medium hover:bg-gray-100"
+          title="Fit page width to container"
+        >
+          Fit
+        </button>
 
-  // Calculate the fit-to-width PPI as max zoom
-  const maxPpi =
-    containerWidth > 0
-      ? store.getMaxPpi(containerWidth, store.devicePixelRatio)
-      : 192;
-
-  return (
-    <div className="fixed bottom-4 left-4 z-10 bg-white rounded-lg shadow px-2 py-2 flex items-center gap-2">
-      <button
-        onClick={() => {
-          const position = calculateCurrentPosition();
-          store.zoomOut(position, ZOOM_PPI_LEVELS);
-        }}
-        disabled={!store.canZoomOut(ZOOM_PPI_LEVELS)}
-        className="px-3 py-1 rounded text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-100"
-      >
-        −
-      </button>
-
-      <span className="text-sm text-gray-600 min-w-[60px] text-center">
-        {Math.round((store.ppi / 96) * 100)}%
-      </span>
-
-      <button
-        onClick={() => {
-          const position = calculateCurrentPosition();
-          store.zoomIn(position, ZOOM_PPI_LEVELS, maxPpi);
-        }}
-        disabled={!store.canZoomIn(ZOOM_PPI_LEVELS, maxPpi)}
-        className="px-3 py-1 rounded text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-100"
-      >
-        +
-      </button>
-
-      <button
-        onClick={() => {
-          const position = calculateCurrentPosition();
-          const cssWidth = containerRef.current?.clientWidth ?? 0;
-          const dpr = window.devicePixelRatio || 1;
-          if (cssWidth > 0) {
-            store.fitToWidth(cssWidth, position, dpr);
-          }
-        }}
-        className="ml-1 px-2 py-1 rounded text-xs font-medium hover:bg-gray-100"
-        title="Fit page width to container"
-      >
-        Fit
-      </button>
-
-      <button
-        onClick={() => {
-          const position = calculateCurrentPosition();
-          store.resetZoom(position);
-        }}
-        className="px-2 py-1 rounded text-xs font-medium hover:bg-gray-100"
-        title="Reset to 100%"
-      >
-        100%
-      </button>
-    </div>
-  );
-});
+        <button
+          onClick={() => {
+            const { pageNum, position } = calculateCurrentPositionWithPage();
+            const width = getContentWidth();
+            store.setPendingScrollRestore(pageNum, position);
+            store.resetZoom(width);
+          }}
+          className="px-2 py-1 rounded text-xs font-medium hover:bg-gray-100"
+          title="Reset to 100%"
+        >
+          100%
+        </button>
+      </div>
+    );
+  },
+);
 
 /**
  * ARCHITECTURE: PDF Viewer Component
@@ -160,9 +141,9 @@ const ZoomControlsObserver: FC<{
  * 5. INITIAL PAGE RESTORATION:
  *    - Read URL params: ?page=N&ppi=N&position=0.0-1.0
  *    - Wait for dimensionRevision > 0 (page sizes loaded)
- *    - Store manages restoration state (isRestoringInitialView)
- *    - Loading overlay shown based on store state (single source of truth)
- *    - Store completes restoration when target page renders or timeout fires
+ *    - Store manages restoration state via RestorationController
+ *    - Loading overlay shown based on restoration.shouldShowOverlay
+ *    - State machine: idle → initializing → ready → scrolling → complete
  *    - preventUrlWrite flag prevents URL flickering
  *
  * 6. KEYBOARD SHORTCUTS:
@@ -180,7 +161,7 @@ const ZoomControlsObserver: FC<{
  * STATE MANAGEMENT:
  * - hasRestoredRef: Tracks if initial page restoration has been attempted
  * - slotRefs: Array of page slot DOM elements for scrolling and visibility tracking
- * - Store manages: zoomMode, pendingScrollRestore, devicePixelRatio, isRestoringInitialView
+ * - Store manages: zoomMode, pendingScrollRestore, devicePixelRatio, restoration controller
  *
  * REFACTORING NOTES:
  * - Zoom logic lives in store for centralized state management
@@ -199,6 +180,9 @@ export const PdfViewer = observer(({ store }: PdfViewerProps) => {
   // DOM REFS - These persist across re-renders
   // ═══════════════════════════════════════════════════════════════
   const containerRef = useRef<HTMLDivElement>(null);
+  // contentRef: Inner container holding the pages (with max-width and padding)
+  // Used for accurate width measurement for viewport zoom
+  const contentRef = useRef<HTMLDivElement>(null);
   // slotRefs: Array of page container divs (one per page)
   // Used for: scrollIntoView, IntersectionObserver, position calculations
   const slotRefs = useRef<(HTMLDivElement | null)[]>([]);
@@ -207,34 +191,118 @@ export const PdfViewer = observer(({ store }: PdfViewerProps) => {
   // Flag to prevent intersection observer from updating page during programmatic scrolls
   const isProgrammaticScrollRef = useRef(false);
 
+  /**
+   * Helper to perform programmatic scroll and clear flag reliably
+   * Uses RAF instead of setTimeout for more reliable scroll event handling
+   */
+  const performProgrammaticScroll = useCallback(
+    (slot: HTMLElement, behavior: ScrollBehavior = "auto") => {
+      isProgrammaticScrollRef.current = true;
+      slot.scrollIntoView({ behavior, block: "start" });
+
+      // Use double RAF to ensure scroll event has been processed
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          isProgrammaticScrollRef.current = false;
+        });
+      });
+    },
+    [],
+  );
+
+  /**
+   * Helper to wrap programmatic scroll operations (for direct scrollTop setting)
+   * Uses RAF instead of setTimeout for more reliable flag clearing
+   */
+  const withProgrammaticScroll = useCallback((fn: () => void) => {
+    isProgrammaticScrollRef.current = true;
+    fn();
+
+    // Use double RAF to ensure scroll event has been processed
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        isProgrammaticScrollRef.current = false;
+      });
+    });
+  }, []);
+
   // ═══════════════════════════════════════════════════════════════
   // DEVICE PIXEL RATIO TRACKING
   // ═══════════════════════════════════════════════════════════════
   // devicePixelRatio is tracked in store
 
-  // Track container width for responsive zoom calculations
-  const [containerWidth, setContainerWidth] = useState(0);
-
   // Debug overlay state
   const [isDebugOpen, setIsDebugOpen] = useState(false);
 
   // Calculate current position within the current page (0.0 = top, 1.0 = bottom)
-  const calculateCurrentPosition = useCallback((): number => {
-    if (!containerRef.current) return 0;
+  // Returns the page number and position as a tuple for zoom operations
+  // Note: This calculates the ACTUAL page at viewport top, not store.currentPage,
+  // to avoid race conditions with IntersectionObserver updates
+  const calculateCurrentPositionWithPage = useCallback((): {
+    pageNum: number;
+    position: number;
+  } => {
+    if (!containerRef.current) {
+      console.log(
+        "[PdfViewer] calculateCurrentPositionWithPage: no containerRef",
+      );
+      return { pageNum: store.currentPage, position: 0 };
+    }
 
-    const pageNum = store.currentPage;
     const container = containerRef.current;
-    const slot = slotRefs.current[pageNum - 1]; // Convert to 0-based index for array
-    if (!slot) return 0;
+    const viewportTop = container.scrollTop;
 
-    // Use offsetTop to avoid layout thrashing from getBoundingClientRect
-    const top = slot.offsetTop - container.scrollTop;
-    const offset = -top;
+    // Find which page contains or is closest to the viewport top
+    let foundPageNum = store.currentPage;
+    for (let i = 0; i < slotRefs.current.length; i++) {
+      const slot = slotRefs.current[i];
+      if (!slot) continue;
+
+      const slotTop = slot.offsetTop;
+      const slotBottom = slotTop + slot.offsetHeight;
+
+      // Viewport top is within this page
+      if (viewportTop >= slotTop && viewportTop < slotBottom) {
+        foundPageNum = i + 1; // Convert to 1-based page number
+        break;
+      }
+      // Viewport top is above first page - use first page
+      if (i === 0 && viewportTop < slotTop) {
+        foundPageNum = 1;
+        break;
+      }
+    }
+
+    const slot = slotRefs.current[foundPageNum - 1];
+    if (!slot) {
+      console.log(
+        `[PdfViewer] calculateCurrentPositionWithPage: no slot for page ${foundPageNum}`,
+      );
+      return { pageNum: foundPageNum, position: 0 };
+    }
+
+    // Calculate position within the found page (0 = page top at viewport top, 1 = page bottom at viewport top)
+    const distanceFromPageTopToViewportTop = viewportTop - slot.offsetTop;
     const h = slot.offsetHeight || 1;
+    const position = Math.max(
+      0,
+      Math.min(1, distanceFromPageTopToViewportTop / h),
+    );
 
-    // Return as ratio, clamped to [0, 1]
-    return Math.max(0, Math.min(1, offset / h));
-  }, [store, store.currentPage]);
+    console.log(
+      `[PdfViewer] calculateCurrentPositionWithPage: page=${foundPageNum}, position=${position.toFixed(3)}`,
+    );
+    return { pageNum: foundPageNum, position };
+  }, [store]);
+
+  // Get current content width directly from DOM
+  // This avoids issues with stale state when ResizeObserver hasn't fired yet
+  const getContentWidth = useCallback((): number => {
+    if (!contentRef.current) return 0;
+    const width = contentRef.current.getBoundingClientRect().width;
+    console.log("[PdfViewer] getContentWidth:", width);
+    return width;
+  }, []);
 
   // Restore scroll position based on page number (1-based) and position percentage
   const restoreScrollPosition = (pageNum: number, position: number) => {
@@ -254,23 +322,38 @@ export const PdfViewer = observer(({ store }: PdfViewerProps) => {
     slotRefs.current.length = store.pageCount;
   }, [store.pageCount]);
 
-  // Track container width for zoom calculations
+  // Track content width for accurate viewport zoom calculations
+  // Observe the inner container (with max-width and padding) not the outer scroll viewport
   useEffect(() => {
-    if (!containerRef.current) return;
+    if (!contentRef.current) return;
+
+    const handleWidthChange = (width: number) => {
+      if (width > 0) {
+        // Always call applyViewportZoom to update lastContainerWidth
+        // If pageCount === 0, it will just save the width for later use
+        // If pageCount > 0, it will recalculate page dimensions
+        store.applyViewportZoom(width);
+      }
+    };
 
     const resizeObserver = new ResizeObserver((entries) => {
       for (const entry of entries) {
-        const width = entry.contentRect.width;
-        setContainerWidth(width);
+        handleWidthChange(entry.contentRect.width);
       }
     });
 
-    resizeObserver.observe(containerRef.current);
+    resizeObserver.observe(contentRef.current);
+
+    // Manually trigger initial measurement (ResizeObserver doesn't fire for initial size)
+    const initialWidth = contentRef.current.getBoundingClientRect().width;
+    if (initialWidth > 0) {
+      handleWidthChange(initialWidth);
+    }
 
     return () => {
       resizeObserver.disconnect();
     };
-  }, []);
+  }, [store]);
 
   // Auto-focus container on mount so keyboard shortcuts work immediately
   useEffect(() => {
@@ -288,67 +371,41 @@ export const PdfViewer = observer(({ store }: PdfViewerProps) => {
 
     lastManualPageRef.current = store.currentPage;
 
-    // Prevent intersection observer from interfering during programmatic scroll
-    isProgrammaticScrollRef.current = true;
-
     // Scroll to the page (convert to 0-based index for array)
     const slot = slotRefs.current[store.currentPage - 1];
     if (slot && containerRef.current) {
-      slot.scrollIntoView({ behavior: "auto", block: "start" });
+      performProgrammaticScroll(slot);
     }
-
-    // Clear flag after scroll settles
-    const timer = setTimeout(() => {
-      isProgrammaticScrollRef.current = false;
-    }, 100);
-
-    return () => clearTimeout(timer);
-  }, [store, store.currentPage]);
+  }, [store, store.currentPage, performProgrammaticScroll]);
 
   // Keyboard shortcuts for zoom and navigation
   useKeyboardShortcuts({
     store,
     containerRef,
-    calculateCurrentPosition,
+    calculateCurrentPositionWithPage,
     onNavigateToPage: (page: number) => {
-      // Prevent intersection observer from interfering during programmatic scroll
-      isProgrammaticScrollRef.current = true;
-
       store.setCurrentPage(page);
       lastManualPageRef.current = page;
 
       const slot = slotRefs.current[page - 1];
       if (slot && containerRef.current) {
-        slot.scrollIntoView({ behavior: "smooth", block: "start" });
+        performProgrammaticScroll(slot);
       }
-
-      // Clear flag after scroll settles (longer timeout for smooth scrolling)
-      setTimeout(() => {
-        isProgrammaticScrollRef.current = false;
-      }, 500);
     },
   });
 
   // Handle page changes from PageSlider
   const handlePageSliderChange = useCallback(
     (page: number) => {
-      // Prevent intersection observer from interfering during programmatic scroll
-      isProgrammaticScrollRef.current = true;
-
       store.setCurrentPage(page);
       lastManualPageRef.current = page;
 
       const slot = slotRefs.current[page - 1];
       if (slot && containerRef.current) {
-        slot.scrollIntoView({ behavior: "auto", block: "start" });
+        performProgrammaticScroll(slot);
       }
-
-      // Clear flag after scroll settles (even with auto behavior, allow some time)
-      setTimeout(() => {
-        isProgrammaticScrollRef.current = false;
-      }, 100);
     },
-    [store],
+    [store, performProgrammaticScroll],
   );
 
   useEffect(() => {
@@ -422,30 +479,9 @@ export const PdfViewer = observer(({ store }: PdfViewerProps) => {
   useEffect(() => {
     if (typeof window === "undefined") return;
     if (!containerRef.current) return;
-    if (store.pageCount === 0) return;
-
-    const container = containerRef.current;
-    let rafIdForDpr: number | null = null;
-    const prevDprRef = { current: window.devicePixelRatio || 1 };
-
-    // Update position immediately on scroll (no RAF delay)
-    const updatePosition = () => {
-      // Don't update position/URL until initial restoration is complete
-      if (store.isRestoringInitialView) return;
-
-      const position = calculateCurrentPosition();
-      store.setPosition(position);
-    };
-
-    // Throttle position updates to ~10/s (fix #5)
-    let lastWriteTime = 0;
-    const throttledUpdatePosition = () => {
-      const now = performance.now();
-      if (now - lastWriteTime > 100) {
-        updatePosition();
-        lastWriteTime = now;
-      }
-    };
+    // NOTE: Don't check pageCount here! The event listener works regardless of whether pages are loaded.
+    // Checking pageCount causes the effect to wait, then when pages load, the effect re-runs
+    // but containerRef might be null at that moment due to React's rendering cycle.
 
     // Notify store about scroll/layout changes (triggers render scheduling)
     const onScrollEvent = () => {
@@ -455,21 +491,25 @@ export const PdfViewer = observer(({ store }: PdfViewerProps) => {
         store.onScroll();
       }
 
-      // Update URL with throttling to reduce noise
-      throttledUpdatePosition();
+      // Update position in URL (throttled and restoration-aware in store)
+      store.updatePositionFromScroll(calculateCurrentPositionWithPage);
     };
+
+    const container = containerRef.current;
 
     // Listen to scroll on the actual container, not window
     container.addEventListener("scroll", onScrollEvent, { passive: true });
 
     // Handle DPR changes (display changes, zoom, etc.)
     // Note: ResizeObserver on container handles actual resize events
+    let rafIdForDpr: number | null = null;
+    const prevDprRef = { current: window.devicePixelRatio || 1 };
+
     const onDprChange = () => {
       if (rafIdForDpr !== null) return;
       rafIdForDpr = window.requestAnimationFrame(() => {
         rafIdForDpr = null;
         const nowDpr = window.devicePixelRatio || 1;
-        console.log("nowDpr", nowDpr);
 
         const dprChanged = Math.abs(nowDpr - prevDprRef.current) > 0.001;
         if (dprChanged) {
@@ -487,9 +527,6 @@ export const PdfViewer = observer(({ store }: PdfViewerProps) => {
     if (mq?.addEventListener) mq.addEventListener("change", mqListener);
     else if ((mq as any)?.addListener) (mq as any).addListener(mqListener);
 
-    // Trigger initial position update (only after restoration completes)
-    updatePosition();
-
     return () => {
       if (rafIdForDpr !== null) {
         window.cancelAnimationFrame(rafIdForDpr);
@@ -500,7 +537,15 @@ export const PdfViewer = observer(({ store }: PdfViewerProps) => {
       else if ((mq as any)?.removeListener)
         (mq as any).removeListener(mqListener);
     };
-  }, [store, calculateCurrentPosition, store.pageCount]);
+  }, [
+    store,
+    // calculateCurrentPosition,
+    // NOTE: Do NOT add store.pageCount or store.restoration.phase here!
+    // The scroll event listener doesn't depend on these values - it works regardless.
+    // Adding them causes the effect to re-run when they change, which can lead to
+    // race conditions where containerRef is unavailable during the re-run.
+    // Restoration state is already handled inside store.updatePositionFromScroll()
+  ]);
 
   // ═══════════════════════════════════════════════════════════════
   // INITIAL PAGE RESTORATION FROM URL
@@ -520,21 +565,32 @@ export const PdfViewer = observer(({ store }: PdfViewerProps) => {
     // Clear the pending restore
     store.clearPendingScrollRestore();
 
-    // Prevent intersection observer interference during restoration
-    isProgrammaticScrollRef.current = true;
-
     // Use double RAF to ensure layout has settled
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
-        restoreScrollPosition(pageNum, position);
-        // Clear programmatic scroll flag
-        setTimeout(() => {
-          isProgrammaticScrollRef.current = false;
-          store.finishInitialRestore();
-        }, 100);
+        withProgrammaticScroll(() => {
+          console.log("[PdfViewer] Restoring scroll position", {
+            pageNum,
+            position,
+          });
+          restoreScrollPosition(pageNum, position);
+
+          // Mark scrolling in restoration state machine
+          store.restoration.markScrolling();
+        });
+
+        // Trigger render after scroll restoration (important for pages to show up)
+        requestAnimationFrame(() => {
+          store.onScroll();
+        });
       });
     });
-  }, [store, store.pageCount, store.pendingScrollRestore]);
+  }, [
+    store,
+    store.pageCount,
+    store.pendingScrollRestore,
+    withProgrammaticScroll,
+  ]);
 
   // ═══════════════════════════════════════════════════════════════
   // ZOOM SCROLL RESTORATION (for zoom changes)
@@ -561,28 +617,32 @@ export const PdfViewer = observer(({ store }: PdfViewerProps) => {
 
     const { pageNum, position } = store.pendingScrollRestore;
     console.log(
-      `[PdfViewer] Zoom scroll restore: page ${pageNum}, position ${position.toFixed(3)}`,
+      `[PdfViewer] Zoom scroll restore: page ${pageNum}, position ${position.toFixed(
+        3,
+      )}`,
     );
     lastPendingRestoreRef.current = store.pendingScrollRestore;
 
     // Clear the pending restore
     store.clearPendingScrollRestore();
 
-    // Prevent intersection observer interference during restoration
-    isProgrammaticScrollRef.current = true;
-
-    // Use double RAF to ensure layout has settled after PPI change
+    // Use triple RAF + setTimeout to ensure layout has fully settled after zoom
+    // Zoom causes many pages to re-render with new dimensions, which can take time
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
-        restoreScrollPosition(pageNum, position);
-        console.log(`[PdfViewer] Scroll position restored to page ${pageNum}`);
-        // Clear programmatic scroll flag
-        setTimeout(() => {
-          isProgrammaticScrollRef.current = false;
-        }, 100);
+        requestAnimationFrame(() => {
+          setTimeout(() => {
+            withProgrammaticScroll(() => {
+              restoreScrollPosition(pageNum, position);
+              console.log(
+                `[PdfViewer] Scroll position restored to page ${pageNum}`,
+              );
+            });
+          }, 100);
+        });
       });
     });
-  }, [store, store.pendingScrollRestore]);
+  }, [store, store.pendingScrollRestore, withProgrammaticScroll]);
 
   if (store.isLoading) {
     return (
@@ -621,7 +681,7 @@ export const PdfViewer = observer(({ store }: PdfViewerProps) => {
       />
 
       {/* Loading overlay during page restoration */}
-      {store.isRestoringInitialView && (
+      {store.restoration.shouldShowOverlay && (
         <div className="absolute inset-0 z-50 bg-gray-100 flex items-center justify-center">
           <div className="text-gray-500">Loading PDF…</div>
         </div>
@@ -631,8 +691,8 @@ export const PdfViewer = observer(({ store }: PdfViewerProps) => {
       {pageCount > 0 && (
         <ZoomControlsObserver
           store={store}
-          containerRef={containerRef}
-          containerWidth={containerWidth}
+          calculateCurrentPositionWithPage={calculateCurrentPositionWithPage}
+          getContentWidth={getContentWidth}
         />
       )}
 
@@ -646,6 +706,7 @@ export const PdfViewer = observer(({ store }: PdfViewerProps) => {
       )}
 
       <div
+        ref={contentRef}
         className="pdf-scroll-container mx-auto px-4 py-8"
         style={{ maxWidth: containerMaxWidth }}
       >

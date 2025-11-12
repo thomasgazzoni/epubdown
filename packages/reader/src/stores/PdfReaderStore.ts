@@ -276,13 +276,8 @@ export class PdfReaderStore {
   private canvases = new Map<number, HTMLCanvasElement>(); // Fallback only
   private memoryBytes = 0;
   private bitmapBytes = 0; // Separate tracking for bitmaps
-  memoryBudgetBytes = 512 * 1024 * 1024; // 256MB budget
+  memoryBudgetBytes = 512 * 1024 * 1024; // 512MB budget
   private debug = false;
-  // Performance tracking
-  private renderCallCount = 0;
-  // Average full render duration tracking (rolling window)
-  private renderDurations: number[] = [];
-  private readonly MAX_RENDER_SAMPLES = 10;
   // Generation token for canceling stale tasks
   private taskGen = 0;
   // Scroll velocity tracking for adaptive quality
@@ -407,25 +402,6 @@ export class PdfReaderStore {
       this.devicePixelRatio;
     const safe = Math.min(requestedPpi, ppiLimitBySide, ppiLimitByArea);
     return Math.max(72, Math.floor(safe)); // keep >=72 effective ppi
-  }
-
-  /**
-   * Track render duration for performance metrics
-   */
-  private recordRenderDuration(durationMs: number) {
-    this.renderDurations.push(durationMs);
-    if (this.renderDurations.length > this.MAX_RENDER_SAMPLES) {
-      this.renderDurations.shift();
-    }
-  }
-
-  /**
-   * Get average full render duration
-   */
-  private getAvgFullRenderMs(): number {
-    if (this.renderDurations.length === 0) return 0;
-    const sum = this.renderDurations.reduce((a, b) => a + b, 0);
-    return sum / this.renderDurations.length;
   }
 
   /**
@@ -623,6 +599,30 @@ export class PdfReaderStore {
   }
 
   /**
+   * Finalize document initialization after page sizes are loaded
+   * This is the common post-initialization sequence for both worker and main-thread paths
+   */
+  private async finalizeDocumentInit() {
+    // Update TOC state
+    runInAction(() => {
+      this.tocStore.updateActiveItem(this.currentPage);
+      this.tocStore.expandToActive();
+    });
+
+    // Load page sizes from cache or PDF/Worker
+    await this.loadPageSizes();
+
+    // Apply viewport zoom to newly loaded pages
+    // This is necessary even at 1.0x zoom to size pages correctly based on actual container width
+    if (this.lastContainerWidth > 0) {
+      this.applyViewportZoom(this.lastContainerWidth);
+    }
+
+    // Trigger initial render after page sizes are loaded
+    this.triggerRender();
+  }
+
+  /**
    * Open PDF document and initialize rendering infrastructure
    *
    * CRITICAL PATH PERFORMANCE:
@@ -708,22 +708,8 @@ export class PdfReaderStore {
         await this.tocStore.load(tocDoc);
         tocDoc.destroy();
 
-        runInAction(() => {
-          this.tocStore.updateActiveItem(this.currentPage);
-          this.tocStore.expandToActive();
-        });
-
-        // Load page sizes from cache or Worker
-        await this.loadPageSizes();
-
-        // Apply viewport zoom to newly loaded pages
-        // This is necessary even at 1.0x zoom to size pages correctly based on actual container width
-        if (this.lastContainerWidth > 0) {
-          this.applyViewportZoom(this.lastContainerWidth);
-        }
-
-        // Trigger initial render
-        this.triggerRender();
+        // Finalize document initialization (common path for worker and main-thread)
+        await this.finalizeDocumentInit();
         return;
       } catch (err) {
         console.warn(
@@ -760,22 +746,10 @@ export class PdfReaderStore {
       if (!this.restoration.isRestoring) {
         this.currentPage = 1;
       }
-
-      this.tocStore.updateActiveItem(this.currentPage);
-      this.tocStore.expandToActive();
     });
 
-    // Load page sizes from cache or PDF
-    await this.loadPageSizes();
-
-    // Apply viewport zoom to newly loaded pages
-    // This is necessary even at 1.0x zoom to size pages correctly based on actual container width
-    if (this.lastContainerWidth > 0) {
-      this.applyViewportZoom(this.lastContainerWidth);
-    }
-
-    // Trigger initial render after page sizes are loaded
-    this.triggerRender();
+    // Finalize document initialization (common path for worker and main-thread)
+    await this.finalizeDocumentInit();
   }
 
   /**
@@ -925,22 +899,6 @@ export class PdfReaderStore {
   }
 
   /**
-   * Get full bitmap for a page
-   * @param pageNum 1-based page number
-   */
-  getFullBitmap(pageNum: number): ImageBitmap | null {
-    return this.bitmaps.get(pageNum) ?? null;
-  }
-
-  /**
-   * Get canvas for a page (fallback only)
-   * @param pageNum 1-based page number
-   */
-  getCanvas(pageNum: number): HTMLCanvasElement | null {
-    return this.canvases.get(pageNum) ?? null;
-  }
-
-  /**
    * Calculate canvas memory size in bytes
    */
   private getCanvasSize(canvas: HTMLCanvasElement | null): number {
@@ -959,7 +917,7 @@ export class PdfReaderStore {
    * @param pageNum 1-based page number
    * @param bitmap ImageBitmap to store
    */
-  private async storeBitmap(pageNum: number, bitmap: ImageBitmap) {
+  private storeBitmap(pageNum: number, bitmap: ImageBitmap) {
     const size = this.getBitmapSize(bitmap);
     this.bitmapBytes += size;
 
@@ -971,12 +929,6 @@ export class PdfReaderStore {
     }
     this.bitmaps.set(pageNum, bitmap);
     this.docState.setPageHasFull(pageNum, true);
-
-    // Record render duration for performance metrics
-    const pageData = this.docState.getPageData(pageNum);
-    if (pageData?.renderDurationMs) {
-      this.recordRenderDuration(pageData.renderDurationMs);
-    }
 
     this.docState.setPageRendered(pageNum);
     this.docState.touchPage(pageNum);
@@ -1046,26 +998,12 @@ export class PdfReaderStore {
   }
 
   /**
-   * Clear all canvases (e.g., when PPI changes) - legacy fallback
-   */
-  private clearAllCanvases() {
-    for (const [pageNum, canvas] of this.canvases.entries()) {
-      this.detachCanvas(pageNum, canvas);
-    }
-    this.canvases.clear();
-    this.memoryBytes = 0;
-  }
-
-  /**
-   * Enforce memory budget by removing least recently used canvases.
+   * Schedule memory budget enforcement with intelligent debouncing
    *
-   * CRITICAL: Protects pages in the render window (current ± 5) from eviction
-   * to prevent visible pages from disappearing. Only evicts pages outside
-   * the render window, starting with least recently used.
-   */
-  /**
-   * Schedule gentle memory budget enforcement (debounced)
-   * Don't evict during hot scroll - wait for things to settle
+   * Strategy:
+   * 1. Debounce evictions by 100ms to avoid work during hot scroll
+   * 2. If badly over budget (>130%), enforce immediately
+   * 3. Protect current ±1 pages from eviction (see enforceMemoryBudget)
    */
   private scheduleMemoryBudgetEnforcement() {
     const totalBytes = this.memoryBytes + this.bitmapBytes;
@@ -1224,8 +1162,6 @@ export class PdfReaderStore {
    * Perform actual render task
    */
   private async performRender(task: RenderTask): Promise<void> {
-    this.renderCallCount++;
-
     if (task.abortSignal.aborted) {
       return;
     }
@@ -1462,35 +1398,6 @@ export class PdfReaderStore {
   // ═══════════════════════════════════════════════════════════════
 
   /**
-   * Calculate effective PPI needed to fit page width to container
-   * (Used for legacy compatibility, prefer viewport zoom percent)
-   */
-  getMaxPpi(containerWidth: number, devicePixelRatio: number): number {
-    if (!containerWidth || containerWidth <= 0 || this.pageCount === 0) {
-      return 192;
-    }
-
-    const pageData = this.docState.getPageData(this.currentPage);
-    if (!pageData?.wPt) return 192;
-
-    // Calculate the effective PPI needed to fit the page width to the container
-    const targetPx = containerWidth * devicePixelRatio;
-    const ppiFit = (targetPx * 72) / pageData.wPt;
-
-    return Math.round(ppiFit);
-  }
-
-  /**
-   * Recalculate all page dimensions based on current zoom.
-   */
-  recalculateDimensions() {
-    // Force recalculation of pixel dimensions for all pages
-    if (this.lastContainerWidth > 0) {
-      this.docState.setViewportZoom(this.lastContainerWidth, this.zoomPercent);
-    }
-  }
-
-  /**
    * Apply viewport-based zoom to all pages
    * @param containerWidth Container width in CSS pixels
    */
@@ -1502,16 +1409,11 @@ export class PdfReaderStore {
 
   /**
    * Zoom in to next level
+   * @param zoomLevels Array of zoom levels to step through
    * @param containerWidth Optional container width (falls back to lastContainerWidth)
+   * @note Caller should set pendingScrollRestore before calling this method
    */
-  zoomIn(
-    currentPosition: number,
-    zoomLevels: number[],
-    containerWidth?: number,
-  ) {
-    // Note: Caller should set pendingScrollRestore before calling this method
-    // to ensure correct page number is preserved (callers use calculateCurrentPositionWithPage)
-
+  zoomIn(zoomLevels: number[], containerWidth?: number) {
     // Find current zoom level
     let currentIndex = zoomLevels.findIndex(
       (z) => Math.abs(z - this.zoomPercent) < 0.01,
@@ -1533,16 +1435,11 @@ export class PdfReaderStore {
 
   /**
    * Zoom out to previous level
+   * @param zoomLevels Array of zoom levels to step through
    * @param containerWidth Optional container width (falls back to lastContainerWidth)
+   * @note Caller should set pendingScrollRestore before calling this method
    */
-  zoomOut(
-    currentPosition: number,
-    zoomLevels: number[],
-    containerWidth?: number,
-  ) {
-    // Note: Caller should set pendingScrollRestore before calling this method
-    // to ensure correct page number is preserved (callers use calculateCurrentPositionWithPage)
-
+  zoomOut(zoomLevels: number[], containerWidth?: number) {
     // Find current zoom level
     let currentIndex = zoomLevels.findIndex(
       (z) => Math.abs(z - this.zoomPercent) < 0.01,
@@ -1564,10 +1461,9 @@ export class PdfReaderStore {
   /**
    * Reset zoom to 100% (fit to container width)
    * @param containerWidth Optional container width (falls back to lastContainerWidth)
+   * @note Caller should set pendingScrollRestore before calling this method
    */
-  resetZoom(currentPosition: number, containerWidth?: number) {
-    // Note: Caller should set pendingScrollRestore before calling this method
-    // to ensure correct page number is preserved (callers use calculateCurrentPositionWithPage)
+  resetZoom(containerWidth?: number) {
     if (Math.abs(this.zoomPercent - 1.0) > 0.01) {
       this.setZoomPercent(1.0, containerWidth);
     }
@@ -1576,10 +1472,9 @@ export class PdfReaderStore {
   /**
    * Fit current page to container width (same as 100% in viewport mode)
    * @param containerWidth Optional container width (falls back to lastContainerWidth)
+   * @note Caller should set pendingScrollRestore before calling this method
    */
-  fitToWidth(currentPosition: number, containerWidth?: number) {
-    // Note: Caller should set pendingScrollRestore before calling this method
-    // to ensure correct page number is preserved (callers use calculateCurrentPositionWithPage)
+  fitToWidth(containerWidth?: number) {
     // In viewport mode, fit = 100% = 1.0
     if (Math.abs(this.zoomPercent - 1.0) > 0.01) {
       this.setZoomPercent(1.0, containerWidth);
@@ -1863,11 +1758,11 @@ export class PdfReaderStore {
   }
 
   /**
-   * Get canvas for a specific page
+   * Get canvas for a specific page (fallback only)
    * @param pageNum 1-based page number
    */
   getPageCanvas(pageNum: number): HTMLCanvasElement | null {
-    return this.getCanvas(pageNum);
+    return this.canvases.get(pageNum) ?? null;
   }
 
   /**

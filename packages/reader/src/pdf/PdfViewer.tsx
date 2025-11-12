@@ -53,7 +53,7 @@ const ZoomControlsObserver: FC<{
             const { pageNum, position } = calculateCurrentPositionWithPage();
             const width = getContentWidth();
             store.setPendingScrollRestore(pageNum, position);
-            store.zoomOut(position, ZOOM_PERCENT_LEVELS, width);
+            store.zoomOut(ZOOM_PERCENT_LEVELS, width);
           }}
           disabled={!store.canZoomOut(ZOOM_PERCENT_LEVELS)}
           className="px-3 py-1 rounded text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-100"
@@ -70,7 +70,7 @@ const ZoomControlsObserver: FC<{
             const { pageNum, position } = calculateCurrentPositionWithPage();
             const width = getContentWidth();
             store.setPendingScrollRestore(pageNum, position);
-            store.zoomIn(position, ZOOM_PERCENT_LEVELS, width);
+            store.zoomIn(ZOOM_PERCENT_LEVELS, width);
           }}
           disabled={!store.canZoomIn(ZOOM_PERCENT_LEVELS)}
           className="px-3 py-1 rounded text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-100"
@@ -83,7 +83,7 @@ const ZoomControlsObserver: FC<{
             const { pageNum, position } = calculateCurrentPositionWithPage();
             const width = getContentWidth();
             store.setPendingScrollRestore(pageNum, position);
-            store.fitToWidth(position, width);
+            store.fitToWidth(width);
           }}
           className="ml-1 px-2 py-1 rounded text-xs font-medium hover:bg-gray-100"
           title="Fit page width to container"
@@ -96,7 +96,7 @@ const ZoomControlsObserver: FC<{
             const { pageNum, position } = calculateCurrentPositionWithPage();
             const width = getContentWidth();
             store.setPendingScrollRestore(pageNum, position);
-            store.resetZoom(position, width);
+            store.resetZoom(width);
           }}
           className="px-2 py-1 rounded text-xs font-medium hover:bg-gray-100"
           title="Reset to 100%"

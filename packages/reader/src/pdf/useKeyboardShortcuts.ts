@@ -51,7 +51,7 @@ export function useKeyboardShortcuts({
           e.preventDefault();
           const { pageNum, position } = calculateCurrentPositionWithPage();
           store.setPendingScrollRestore(pageNum, position);
-          store.zoomIn(position, ZOOM_PERCENT_LEVELS);
+          store.zoomIn(ZOOM_PERCENT_LEVELS);
           break;
         }
         case "-":
@@ -60,7 +60,7 @@ export function useKeyboardShortcuts({
           e.preventDefault();
           const { pageNum, position } = calculateCurrentPositionWithPage();
           store.setPendingScrollRestore(pageNum, position);
-          store.zoomOut(position, ZOOM_PERCENT_LEVELS);
+          store.zoomOut(ZOOM_PERCENT_LEVELS);
           break;
         }
         case "0": {
@@ -68,7 +68,7 @@ export function useKeyboardShortcuts({
           e.preventDefault();
           const { pageNum, position } = calculateCurrentPositionWithPage();
           store.setPendingScrollRestore(pageNum, position);
-          store.resetZoom(position);
+          store.resetZoom();
           break;
         }
         case "f":
@@ -77,7 +77,7 @@ export function useKeyboardShortcuts({
           e.preventDefault();
           const { pageNum, position } = calculateCurrentPositionWithPage();
           store.setPendingScrollRestore(pageNum, position);
-          store.fitToWidth(position);
+          store.fitToWidth();
           break;
         }
         case "Home": {

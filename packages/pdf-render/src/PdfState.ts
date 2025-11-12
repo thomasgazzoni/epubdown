@@ -92,14 +92,16 @@ export class PdfStateStore {
   setViewportZoom(containerCssWidth: number, zoomPercent: number) {
     let anyChanged = false;
     for (const page of this.pages.values()) {
-      if (!(page.wPt && page.hPt)) continue;
+      if (!(page.wPt && page.hPt)) {
+        continue;
+      }
       const targetCssW = Math.max(
         1,
         Math.round(containerCssWidth * zoomPercent),
       );
       const effectivePpi = (targetCssW * 72) / page.wPt;
-      anyChanged =
-        this.updatePixelDimensionsWithPpi(page, effectivePpi) || anyChanged;
+      const changed = this.updatePixelDimensionsWithPpi(page, effectivePpi);
+      anyChanged = anyChanged || changed;
     }
     // Only mark bitmaps stale if dimensions actually changed
     if (anyChanged) {

@@ -716,6 +716,12 @@ export class PdfReaderStore {
         // Load page sizes from cache or Worker
         await this.loadPageSizes();
 
+        // Apply viewport zoom to newly loaded pages
+        // This is necessary even at 1.0x zoom to size pages correctly based on actual container width
+        if (this.lastContainerWidth > 0) {
+          this.applyViewportZoom(this.lastContainerWidth);
+        }
+
         // Trigger initial render
         this.triggerRender();
         return;
@@ -761,6 +767,12 @@ export class PdfReaderStore {
 
     // Load page sizes from cache or PDF
     await this.loadPageSizes();
+
+    // Apply viewport zoom to newly loaded pages
+    // This is necessary even at 1.0x zoom to size pages correctly based on actual container width
+    if (this.lastContainerWidth > 0) {
+      this.applyViewportZoom(this.lastContainerWidth);
+    }
 
     // Trigger initial render after page sizes are loaded
     this.triggerRender();
@@ -1497,7 +1509,8 @@ export class PdfReaderStore {
     zoomLevels: number[],
     containerWidth?: number,
   ) {
-    this.setPendingScrollRestore(this.currentPage, currentPosition);
+    // Note: Caller should set pendingScrollRestore before calling this method
+    // to ensure correct page number is preserved (callers use calculateCurrentPositionWithPage)
 
     // Find current zoom level
     let currentIndex = zoomLevels.findIndex(
@@ -1527,7 +1540,8 @@ export class PdfReaderStore {
     zoomLevels: number[],
     containerWidth?: number,
   ) {
-    this.setPendingScrollRestore(this.currentPage, currentPosition);
+    // Note: Caller should set pendingScrollRestore before calling this method
+    // to ensure correct page number is preserved (callers use calculateCurrentPositionWithPage)
 
     // Find current zoom level
     let currentIndex = zoomLevels.findIndex(
@@ -1552,7 +1566,8 @@ export class PdfReaderStore {
    * @param containerWidth Optional container width (falls back to lastContainerWidth)
    */
   resetZoom(currentPosition: number, containerWidth?: number) {
-    this.setPendingScrollRestore(this.currentPage, currentPosition);
+    // Note: Caller should set pendingScrollRestore before calling this method
+    // to ensure correct page number is preserved (callers use calculateCurrentPositionWithPage)
     if (Math.abs(this.zoomPercent - 1.0) > 0.01) {
       this.setZoomPercent(1.0, containerWidth);
     }
@@ -1563,7 +1578,8 @@ export class PdfReaderStore {
    * @param containerWidth Optional container width (falls back to lastContainerWidth)
    */
   fitToWidth(currentPosition: number, containerWidth?: number) {
-    this.setPendingScrollRestore(this.currentPage, currentPosition);
+    // Note: Caller should set pendingScrollRestore before calling this method
+    // to ensure correct page number is preserved (callers use calculateCurrentPositionWithPage)
     // In viewport mode, fit = 100% = 1.0
     if (Math.abs(this.zoomPercent - 1.0) > 0.01) {
       this.setZoomPercent(1.0, containerWidth);

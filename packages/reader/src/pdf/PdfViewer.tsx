@@ -231,9 +231,6 @@ export const PdfViewer = observer(({ store }: PdfViewerProps) => {
   // ═══════════════════════════════════════════════════════════════
   // devicePixelRatio is tracked in store
 
-  // Track content width (inner container) for accurate viewport zoom calculations
-  const [contentWidth, setContentWidth] = useState(0);
-
   // Debug overlay state
   const [isDebugOpen, setIsDebugOpen] = useState(false);
 
@@ -342,31 +339,33 @@ export const PdfViewer = observer(({ store }: PdfViewerProps) => {
     slotRefs.current.length = store.pageCount;
   }, [store.pageCount]);
 
-  // Apply initial viewport zoom when pages are loaded
-  useEffect(() => {
-    if (store.pageCount > 0 && contentWidth > 0) {
-      store.applyViewportZoom(contentWidth);
-    }
-  }, [store, store.pageCount, contentWidth]);
-
   // Track content width for accurate viewport zoom calculations
   // Observe the inner container (with max-width and padding) not the outer scroll viewport
   useEffect(() => {
     if (!contentRef.current) return;
 
+    const handleWidthChange = (width: number) => {
+      if (width > 0) {
+        // Always call applyViewportZoom to update lastContainerWidth
+        // If pageCount === 0, it will just save the width for later use
+        // If pageCount > 0, it will recalculate page dimensions
+        store.applyViewportZoom(width);
+      }
+    };
+
     const resizeObserver = new ResizeObserver((entries) => {
       for (const entry of entries) {
-        const width = entry.contentRect.width;
-        setContentWidth(width);
-
-        // Apply viewport zoom when content width changes
-        if (width > 0 && store.pageCount > 0) {
-          store.applyViewportZoom(width);
-        }
+        handleWidthChange(entry.contentRect.width);
       }
     });
 
     resizeObserver.observe(contentRef.current);
+
+    // Manually trigger initial measurement (ResizeObserver doesn't fire for initial size)
+    const initialWidth = contentRef.current.getBoundingClientRect().width;
+    if (initialWidth > 0) {
+      handleWidthChange(initialWidth);
+    }
 
     return () => {
       resizeObserver.disconnect();
@@ -647,14 +646,19 @@ export const PdfViewer = observer(({ store }: PdfViewerProps) => {
     // Clear the pending restore
     store.clearPendingScrollRestore();
 
-    // Use double RAF to ensure layout has settled after PPI change
+    // Use triple RAF + setTimeout to ensure layout has fully settled after zoom
+    // Zoom causes many pages to re-render with new dimensions, which can take time
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
-        withProgrammaticScroll(() => {
-          restoreScrollPosition(pageNum, position);
-          console.log(
-            `[PdfViewer] Scroll position restored to page ${pageNum}`,
-          );
+        requestAnimationFrame(() => {
+          setTimeout(() => {
+            withProgrammaticScroll(() => {
+              restoreScrollPosition(pageNum, position);
+              console.log(
+                `[PdfViewer] Scroll position restored to page ${pageNum}`,
+              );
+            });
+          }, 100);
         });
       });
     });

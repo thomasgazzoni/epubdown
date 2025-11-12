@@ -236,7 +236,7 @@ export const PdfViewer = observer(({ store }: PdfViewerProps) => {
 
   // Calculate current position within the current page (0.0 = top, 1.0 = bottom)
   // Returns the page number and position as a tuple for zoom operations
-  // Note: This calculates the ACTUAL page at viewport center, not store.currentPage,
+  // Note: This calculates the ACTUAL page at viewport top, not store.currentPage,
   // to avoid race conditions with IntersectionObserver updates
   const calculateCurrentPositionWithPage = useCallback((): {
     pageNum: number;
@@ -250,10 +250,9 @@ export const PdfViewer = observer(({ store }: PdfViewerProps) => {
     }
 
     const container = containerRef.current;
-    const viewportCenter = container.clientHeight / 2;
-    const absoluteCenter = container.scrollTop + viewportCenter;
+    const viewportTop = container.scrollTop;
 
-    // Find which page contains the viewport center
+    // Find which page contains or is closest to the viewport top
     let foundPageNum = store.currentPage;
     for (let i = 0; i < slotRefs.current.length; i++) {
       const slot = slotRefs.current[i];
@@ -262,8 +261,14 @@ export const PdfViewer = observer(({ store }: PdfViewerProps) => {
       const slotTop = slot.offsetTop;
       const slotBottom = slotTop + slot.offsetHeight;
 
-      if (absoluteCenter >= slotTop && absoluteCenter < slotBottom) {
+      // Viewport top is within this page
+      if (viewportTop >= slotTop && viewportTop < slotBottom) {
         foundPageNum = i + 1; // Convert to 1-based page number
+        break;
+      }
+      // Viewport top is above first page - use first page
+      if (i === 0 && viewportTop < slotTop) {
+        foundPageNum = 1;
         break;
       }
     }
@@ -276,40 +281,18 @@ export const PdfViewer = observer(({ store }: PdfViewerProps) => {
       return { pageNum: foundPageNum, position: 0 };
     }
 
-    // Calculate position within the found page
-    const slotTopRelativeToViewport = slot.offsetTop - container.scrollTop;
-    const distanceFromSlotTopToCenter =
-      viewportCenter - slotTopRelativeToViewport;
+    // Calculate position within the found page (0 = page top at viewport top, 1 = page bottom at viewport top)
+    const distanceFromPageTopToViewportTop = viewportTop - slot.offsetTop;
     const h = slot.offsetHeight || 1;
-    const position = Math.max(0, Math.min(1, distanceFromSlotTopToCenter / h));
+    const position = Math.max(
+      0,
+      Math.min(1, distanceFromPageTopToViewportTop / h),
+    );
 
     console.log(
       `[PdfViewer] calculateCurrentPositionWithPage: page=${foundPageNum}, position=${position.toFixed(3)}`,
     );
     return { pageNum: foundPageNum, position };
-  }, [store]);
-
-  // Legacy wrapper for scroll position updates (uses store.currentPage)
-  const calculateCurrentPosition = useCallback((): number => {
-    if (!containerRef.current) {
-      return 0;
-    }
-
-    const pageNum = store.currentPage;
-    const container = containerRef.current;
-    const slot = slotRefs.current[pageNum - 1];
-    if (!slot) {
-      return 0;
-    }
-
-    const viewportCenter = container.clientHeight / 2;
-    const slotTopRelativeToViewport = slot.offsetTop - container.scrollTop;
-    const distanceFromSlotTopToCenter =
-      viewportCenter - slotTopRelativeToViewport;
-    const h = slot.offsetHeight || 1;
-    const position = Math.max(0, Math.min(1, distanceFromSlotTopToCenter / h));
-
-    return position;
   }, [store]);
 
   // Get current content width directly from DOM
@@ -500,10 +483,6 @@ export const PdfViewer = observer(({ store }: PdfViewerProps) => {
     // Checking pageCount causes the effect to wait, then when pages load, the effect re-runs
     // but containerRef might be null at that moment due to React's rendering cycle.
 
-    const container = containerRef.current;
-    let rafIdForDpr: number | null = null;
-    const prevDprRef = { current: window.devicePixelRatio || 1 };
-
     // Notify store about scroll/layout changes (triggers render scheduling)
     const onScrollEvent = () => {
       // Skip render scheduling if this is a programmatic scroll
@@ -513,14 +492,19 @@ export const PdfViewer = observer(({ store }: PdfViewerProps) => {
       }
 
       // Update position in URL (throttled and restoration-aware in store)
-      store.updatePositionFromScroll(calculateCurrentPosition);
+      store.updatePositionFromScroll(calculateCurrentPositionWithPage);
     };
+
+    const container = containerRef.current;
 
     // Listen to scroll on the actual container, not window
     container.addEventListener("scroll", onScrollEvent, { passive: true });
 
     // Handle DPR changes (display changes, zoom, etc.)
     // Note: ResizeObserver on container handles actual resize events
+    let rafIdForDpr: number | null = null;
+    const prevDprRef = { current: window.devicePixelRatio || 1 };
+
     const onDprChange = () => {
       if (rafIdForDpr !== null) return;
       rafIdForDpr = window.requestAnimationFrame(() => {
@@ -543,10 +527,6 @@ export const PdfViewer = observer(({ store }: PdfViewerProps) => {
     if (mq?.addEventListener) mq.addEventListener("change", mqListener);
     else if ((mq as any)?.addListener) (mq as any).addListener(mqListener);
 
-    // NOTE: Do NOT call store.updatePositionFromScroll here!
-    // That would write to the URL before parseUrlParams() is called, overwriting the initial URL.
-    // The position will be updated naturally via scroll events after restoration completes.
-
     return () => {
       if (rafIdForDpr !== null) {
         window.cancelAnimationFrame(rafIdForDpr);
@@ -559,7 +539,7 @@ export const PdfViewer = observer(({ store }: PdfViewerProps) => {
     };
   }, [
     store,
-    calculateCurrentPosition,
+    // calculateCurrentPosition,
     // NOTE: Do NOT add store.pageCount or store.restoration.phase here!
     // The scroll event listener doesn't depend on these values - it works regardless.
     // Adding them causes the effect to re-run when they change, which can lead to

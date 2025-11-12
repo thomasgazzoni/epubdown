@@ -1688,10 +1688,15 @@ export class PdfReaderStore {
   /**
    * Update position from scroll event
    * Throttled to ~10/s to reduce URL write frequency
-   * @param getPosition Callback to calculate current position (0.0-1.0)
+   * @param getPosition Callback to calculate current page and position based on viewport top
    */
   private lastPositionUpdateTime = 0;
-  updatePositionFromScroll(getPosition: () => number) {
+  updatePositionFromScroll(
+    getPosition: () => {
+      pageNum: number;
+      position: number;
+    },
+  ) {
     // Don't update position/URL until initial restoration is complete
     if (this.restoration.shouldBlockUpdates) {
       return;
@@ -1700,7 +1705,15 @@ export class PdfReaderStore {
     // Throttle to ~10/s
     const now = performance.now();
     if (now - this.lastPositionUpdateTime > 100) {
-      const position = getPosition();
+      const { pageNum, position } = getPosition();
+
+      // Update current page if it differs (to keep URL in sync with calculated position)
+      // This ensures the URL accurately reflects which page the viewport top is in
+      if (pageNum !== this.currentPage) {
+        this.currentPage = pageNum;
+        this.updateActiveItem();
+      }
+
       this.setPosition(position);
       this.lastPositionUpdateTime = now;
     }

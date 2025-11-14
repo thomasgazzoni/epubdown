@@ -46,6 +46,10 @@ const ZoomControlsObserver: FC<{
   getContentWidth: () => number;
 }> = observer(
   ({ store, calculateCurrentPositionWithPage, getContentWidth }) => {
+    // Disable zoom controls during scroll restoration to prevent rapid clicks
+    // from capturing incorrect scroll positions during dimension recalculation
+    const isRestoring = !!store.pendingScrollRestore;
+
     return (
       <div className="fixed bottom-4 left-4 z-10 bg-white rounded-lg shadow px-2 py-2 flex items-center gap-2">
         <button
@@ -55,7 +59,7 @@ const ZoomControlsObserver: FC<{
             store.setPendingScrollRestore(pageNum, position);
             store.zoomOut(ZOOM_PERCENT_LEVELS, width);
           }}
-          disabled={!store.canZoomOut(ZOOM_PERCENT_LEVELS)}
+          disabled={isRestoring || !store.canZoomOut(ZOOM_PERCENT_LEVELS)}
           className="px-3 py-1 rounded text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-100"
         >
           −
@@ -72,7 +76,7 @@ const ZoomControlsObserver: FC<{
             store.setPendingScrollRestore(pageNum, position);
             store.zoomIn(ZOOM_PERCENT_LEVELS, width);
           }}
-          disabled={!store.canZoomIn(ZOOM_PERCENT_LEVELS)}
+          disabled={isRestoring || !store.canZoomIn(ZOOM_PERCENT_LEVELS)}
           className="px-3 py-1 rounded text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-100"
         >
           +
@@ -85,7 +89,8 @@ const ZoomControlsObserver: FC<{
             store.setPendingScrollRestore(pageNum, position);
             store.fitToWidth(width);
           }}
-          className="ml-1 px-2 py-1 rounded text-xs font-medium hover:bg-gray-100"
+          disabled={isRestoring}
+          className="ml-1 px-2 py-1 rounded text-xs font-medium disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-100"
           title="Fit page width to container"
         >
           Fit
@@ -98,7 +103,8 @@ const ZoomControlsObserver: FC<{
             store.setPendingScrollRestore(pageNum, position);
             store.resetZoom(width);
           }}
-          className="px-2 py-1 rounded text-xs font-medium hover:bg-gray-100"
+          disabled={isRestoring}
+          className="px-2 py-1 rounded text-xs font-medium disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-100"
           title="Reset to 100%"
         >
           100%

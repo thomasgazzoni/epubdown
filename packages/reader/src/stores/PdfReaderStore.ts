@@ -47,7 +47,7 @@ type RestorationPhase =
 class RestorationController {
   phase: RestorationPhase = "idle";
   targetPage: number | null = null;
-  targetPosition: number = 0;
+  targetPosition = 0;
   targetZoom: number | null = null;
   private safetyTimer: number | null = null;
 
@@ -271,9 +271,9 @@ export class PdfReaderStore {
   private workerManager: RenderWorkerManager | null = null;
   private useWorker = false; // Feature flag for Worker rendering
 
-  // Bitmap storage (keys are 1-based page numbers)
-  private bitmaps = new Map<number, ImageBitmap>(); // Full-res at current PPI
-  private canvases = new Map<number, HTMLCanvasElement>(); // Fallback only
+  // Bitmap storage (keys are "pageNum" or "pageNum:tileIndex")
+  private bitmaps = new Map<string, ImageBitmap>(); // Full-res at current PPI
+  private canvases = new Map<string, HTMLCanvasElement>(); // Fallback only
   private memoryBytes = 0;
   private bitmapBytes = 0; // Separate tracking for bitmaps
   memoryBudgetBytes = 512 * 1024 * 1024; // 512MB budget
@@ -699,14 +699,21 @@ export class PdfReaderStore {
         });
 
         // Load TOC from main thread (Worker doesn't provide outline)
-        // Create a temporary engine just for TOC extraction
+        // IMPORTANT: Keep this engine/doc for tiled page rendering
+        // Tiled pages can't use workers yet, so they need main thread access
         const tocEngine = this.makeEngine(kind);
         const tocInitOptions =
           kind === "PDFium" ? { wasmUrl: DEFAULT_PDFIUM_WASM_URL } : undefined;
         await tocEngine.init(tocInitOptions);
         const tocDoc = await tocEngine.loadDocument(data);
         await this.tocStore.load(tocDoc);
-        tocDoc.destroy();
+
+        // Keep the main thread doc/engine for tiled page rendering
+        // Workers handle normal pages, main thread handles tiled pages
+        runInAction(() => {
+          this.engine = tocEngine;
+          this.doc = tocDoc;
+        });
 
         // Finalize document initialization (common path for worker and main-thread)
         await this.finalizeDocumentInit();
@@ -890,12 +897,78 @@ export class PdfReaderStore {
   // ═══════════════════════════════════════════════════════════════
 
   /**
+   * Generate storage key for page or tile
+   * @param pageNum 1-based page number
+   * @param tileIndex Optional tile index for tiled pages
+   * @returns Storage key string
+   */
+  private getTileKey(pageNum: number, tileIndex?: number): string {
+    return tileIndex !== undefined ? `${pageNum}:${tileIndex}` : `${pageNum}`;
+  }
+
+  /**
    * Get bitmap for a page
    * @param pageNum 1-based page number
    * @returns ImageBitmap if available, null otherwise
    */
   getBitmapForPage(pageNum: number): ImageBitmap | null {
-    return this.bitmaps.get(pageNum) ?? null;
+    const key = this.getTileKey(pageNum);
+    return this.bitmaps.get(key) ?? null;
+  }
+
+  /**
+   * Get bitmap for a specific tile
+   * @param pageNum 1-based page number
+   * @param tileIndex 0-based tile index
+   * @returns ImageBitmap if available, null otherwise
+   */
+  getTileBitmap(pageNum: number, tileIndex: number): ImageBitmap | null {
+    const key = this.getTileKey(pageNum, tileIndex);
+    return this.bitmaps.get(key) ?? null;
+  }
+
+  /**
+   * Get canvas for a specific tile
+   * @param pageNum 1-based page number
+   * @param tileIndex 0-based tile index
+   * @returns HTMLCanvasElement if available, null otherwise
+   */
+  getTileCanvas(pageNum: number, tileIndex: number): HTMLCanvasElement | null {
+    const key = this.getTileKey(pageNum, tileIndex);
+    return this.canvases.get(key) ?? null;
+  }
+
+  /**
+   * Clear all tile bitmaps for a page
+   * Called when tiles are recalculated during zoom changes
+   * @param pageNum 1-based page number
+   */
+  private clearTileBitmaps(pageNum: number) {
+    const pageData = this.docState.getPageData(pageNum);
+    if (!pageData?.tiles) return;
+
+    // Clear each tile's bitmap and canvas
+    for (const tile of pageData.tiles) {
+      const key = this.getTileKey(pageNum, tile.tileIndex);
+
+      // Clear bitmap
+      const bitmap = this.bitmaps.get(key);
+      if (bitmap) {
+        this.bitmapBytes -= this.getBitmapSize(bitmap);
+        bitmap.close();
+        this.bitmaps.delete(key);
+      }
+
+      // Clear canvas
+      const canvas = this.canvases.get(key);
+      if (canvas) {
+        this.detachCanvas(pageNum, canvas);
+        this.canvases.delete(key);
+      }
+
+      // Mark tile as unloaded
+      this.docState.markTileUnloaded(pageNum, tile.tileIndex);
+    }
   }
 
   /**
@@ -918,16 +991,17 @@ export class PdfReaderStore {
    * @param bitmap ImageBitmap to store
    */
   private storeBitmap(pageNum: number, bitmap: ImageBitmap) {
+    const key = this.getTileKey(pageNum);
     const size = this.getBitmapSize(bitmap);
     this.bitmapBytes += size;
 
     // Close old full bitmap if exists
-    const oldBitmap = this.bitmaps.get(pageNum);
+    const oldBitmap = this.bitmaps.get(key);
     if (oldBitmap) {
       this.bitmapBytes -= this.getBitmapSize(oldBitmap);
       oldBitmap.close();
     }
-    this.bitmaps.set(pageNum, bitmap);
+    this.bitmaps.set(key, bitmap);
     this.docState.setPageHasFull(pageNum, true);
 
     this.docState.setPageRendered(pageNum);
@@ -938,14 +1012,51 @@ export class PdfReaderStore {
   }
 
   /**
+   * Store bitmap for a tile
+   * @param pageNum 1-based page number
+   * @param tileIndex 0-based tile index
+   * @param bitmap ImageBitmap to store
+   */
+  private storeTileBitmap(
+    pageNum: number,
+    tileIndex: number,
+    bitmap: ImageBitmap,
+  ) {
+    const key = this.getTileKey(pageNum, tileIndex);
+    const size = this.getBitmapSize(bitmap);
+    this.bitmapBytes += size;
+
+    // Close old tile bitmap if exists
+    const oldBitmap = this.bitmaps.get(key);
+    if (oldBitmap) {
+      this.bitmapBytes -= this.getBitmapSize(oldBitmap);
+      oldBitmap.close();
+    }
+    this.bitmaps.set(key, bitmap);
+    this.docState.markTileLoaded(pageNum, tileIndex);
+
+    // Mark page as rendered if all tiles are loaded
+    const pageData = this.docState.getPageData(pageNum);
+    if (
+      pageData?.isTiled &&
+      pageData.tiles &&
+      pageData.tilesLoaded?.size === pageData.tiles.length
+    ) {
+      this.docState.setPageRendered(pageNum);
+    }
+    this.docState.touchPage(pageNum);
+  }
+
+  /**
    * Attach a canvas to a page and update memory tracking (fallback only)
    * @param pageNum 1-based page number
    */
   private attachCanvas(pageNum: number, canvas: HTMLCanvasElement) {
+    const key = this.getTileKey(pageNum);
     const size = this.getCanvasSize(canvas);
     this.memoryBytes += size;
 
-    this.canvases.set(pageNum, canvas);
+    this.canvases.set(key, canvas);
     this.docState.setPageRendered(pageNum);
     this.docState.touchPage(pageNum);
 
@@ -971,11 +1082,24 @@ export class PdfReaderStore {
   /**
    * Mark all bitmaps as stale (on PPI/zoom change)
    * Keep them displayable but mark for upgrade - no white flashes!
+   *
+   * Exception: Clear tile bitmaps immediately since they can't be displayed correctly
+   * at new dimensions (would be distorted). Better to show loading state than distorted tiles.
    */
   private markZoomStale() {
     this.taskGen++; // Increment generation to cancel in-flight tasks
     this.docState.markAllFullBitmapsStale();
-    // Do NOT clear bitmaps - keep showing them until upgrades arrive
+
+    // Clear tile bitmaps for all tiled pages to prevent distortion
+    // (old tile bitmaps at old dimensions can't be scaled to new tile dimensions)
+    for (let pageNum = 1; pageNum <= this.docState.totalPages; pageNum++) {
+      const pageData = this.docState.getPageData(pageNum);
+      if (pageData.isTiled) {
+        this.clearTileBitmaps(pageNum);
+      }
+    }
+
+    // Do NOT clear non-tiled bitmaps - keep showing them until upgrades arrive
   }
 
   /**
@@ -984,6 +1108,8 @@ export class PdfReaderStore {
    *
    * More explicit than relying on "stale" status alone - directly tells
    * the render system these pages need fresh bitmaps.
+   *
+   * Note: Tile bitmaps are cleared separately in markZoomStale()
    */
   private invalidateCurrentWindow() {
     const start = Math.max(1, this.currentPage - 1);
@@ -1062,7 +1188,8 @@ export class PdfReaderStore {
       }
 
       // Evict full bitmap if exists
-      const bitmap = this.bitmaps.get(page.pageNumber);
+      const key = this.getTileKey(page.pageNumber);
+      const bitmap = this.bitmaps.get(key);
       if (bitmap) {
         const size = this.getBitmapSize(bitmap);
         if (this.debug) {
@@ -1072,12 +1199,12 @@ export class PdfReaderStore {
         }
         this.bitmapBytes -= size;
         bitmap.close();
-        this.bitmaps.delete(page.pageNumber);
+        this.bitmaps.delete(key);
         this.docState.setPageHasFull(page.pageNumber, false);
       }
 
       // Evict canvas fallback if exists
-      const canvas = this.canvases.get(page.pageNumber);
+      const canvas = this.canvases.get(key);
       if (canvas) {
         const size = this.getCanvasSize(canvas);
         if (this.debug) {
@@ -1086,7 +1213,7 @@ export class PdfReaderStore {
           );
         }
         this.detachCanvas(page.pageNumber, canvas);
-        this.canvases.delete(page.pageNumber);
+        this.canvases.delete(key);
       }
     }
 
@@ -1101,7 +1228,8 @@ export class PdfReaderStore {
         if (this.memoryBytes + this.bitmapBytes <= this.memoryBudgetBytes)
           break;
 
-        const bitmap = this.bitmaps.get(page.pageNumber);
+        const key = this.getTileKey(page.pageNumber);
+        const bitmap = this.bitmaps.get(key);
         if (bitmap) {
           const size = this.getBitmapSize(bitmap);
           if (this.debug) {
@@ -1111,7 +1239,7 @@ export class PdfReaderStore {
           }
           this.bitmapBytes -= size;
           bitmap.close();
-          this.bitmaps.delete(page.pageNumber);
+          this.bitmaps.delete(key);
           this.docState.setPageHasFull(page.pageNumber, false);
         }
       }
@@ -1177,7 +1305,13 @@ export class PdfReaderStore {
       return;
     }
 
-    // Use Worker rendering if available
+    // IMPORTANT: Check for tiled pages BEFORE worker rendering
+    // Workers don't support tile rendering yet, so tiled pages must use main thread
+    if (pageData?.isTiled && pageData.tiles) {
+      return this.performTiledRender(task, pageData);
+    }
+
+    // Use Worker rendering if available (for non-tiled pages)
     if (this.useWorker && this.workerManager) {
       return this.performWorkerRender(task);
     }
@@ -1245,6 +1379,98 @@ export class PdfReaderStore {
       const message = err instanceof Error ? err.message : String(err);
       console.error(
         `[PdfReaderStore] Error rendering page ${task.pageNumber}:`,
+        err,
+      );
+      runInAction(() => {
+        this.docState.setPageError(task.pageNumber, message);
+      });
+    } finally {
+      page?.destroy();
+    }
+  }
+
+  /**
+   * Perform tiled render for extremely tall pages
+   */
+  private async performTiledRender(
+    task: RenderTask,
+    pageData: PageData,
+  ): Promise<void> {
+    if (!this.doc || !pageData.tiles) {
+      return;
+    }
+
+    let page: Awaited<ReturnType<DocumentHandle["loadPage"]>> | null = null;
+
+    try {
+      this.docState.setPageStatus(task.pageNumber, "rendering");
+
+      console.log(
+        `[PdfReaderStore] Rendering ${pageData.tiles.length} tiles for page ${task.pageNumber}`,
+      );
+
+      // Convert to 0-based index for PDF engine
+      page = await this.doc.loadPage(task.pageNumber - 1);
+
+      if (task.abortSignal.aborted) {
+        return;
+      }
+
+      // Render each tile
+      for (const tile of pageData.tiles) {
+        if (task.abortSignal.aborted) {
+          break;
+        }
+
+        // Create canvas for this tile
+        const canvas = document.createElement("canvas");
+
+        // Yield to event loop to keep UI responsive
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        if (task.abortSignal.aborted) {
+          break;
+        }
+
+        // Render tile
+        await page.renderTileToCanvas(canvas, tile.ppi, {
+          srcX: tile.srcX,
+          srcY: tile.srcY,
+          srcWidth: tile.srcWidth,
+          srcHeight: tile.srcHeight,
+        });
+
+        if (task.abortSignal.aborted) {
+          break;
+        }
+
+        // Try to create ImageBitmap for this tile
+        try {
+          const bitmap = await createImageBitmap(canvas);
+
+          if (!task.abortSignal.aborted) {
+            // Store tile bitmap
+            runInAction(() => {
+              this.storeTileBitmap(task.pageNumber, tile.tileIndex, bitmap);
+            });
+            console.log(
+              `[PdfReaderStore] Rendered tile ${tile.tileIndex + 1}/${pageData.tiles?.length} for page ${task.pageNumber}`,
+            );
+          } else {
+            bitmap.close();
+          }
+        } catch (bitmapErr) {
+          console.warn(
+            `[PdfReaderStore] createImageBitmap failed for tile ${tile.tileIndex}, page ${task.pageNumber}:`,
+            bitmapErr,
+          );
+          // For now, skip canvas fallback for tiles - just log the error
+        }
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(
+        `[PdfReaderStore] Error rendering tiled page ${task.pageNumber}:`,
         err,
       );
       runInAction(() => {
@@ -1544,6 +1770,18 @@ export class PdfReaderStore {
   setCurrentPage(pageNumber: number) {
     const pageNum = Math.max(1, Math.min(this.pageCount, pageNumber));
 
+    // Block page changes during restoration to prevent jumps
+    // The IntersectionObserver may fire with wrong page numbers during dimension changes
+    if (this.restoration.shouldBlockUpdates) {
+      return;
+    }
+
+    // Block page changes during zoom when scroll restoration is pending
+    // Prevents temporary page jumps while dimensions are recalculating
+    if (this.pendingScrollRestore) {
+      return;
+    }
+
     // Early return if page hasn't changed
     if (pageNum === this.currentPage) {
       return;
@@ -1809,7 +2047,8 @@ export class PdfReaderStore {
    * @param pageNum 1-based page number
    */
   getPageCanvas(pageNum: number): HTMLCanvasElement | null {
-    return this.canvases.get(pageNum) ?? null;
+    const key = this.getTileKey(pageNum);
+    return this.canvases.get(key) ?? null;
   }
 
   /**

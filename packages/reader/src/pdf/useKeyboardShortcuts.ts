@@ -47,7 +47,8 @@ export function useKeyboardShortcuts({
       switch (e.key) {
         case "+":
         case "=": {
-          // Zoom in
+          // Zoom in - ignore if already restoring to prevent capturing incorrect position
+          if (store.pendingScrollRestore) return;
           e.preventDefault();
           const { pageNum, position } = calculateCurrentPositionWithPage();
           store.setPendingScrollRestore(pageNum, position);
@@ -56,7 +57,8 @@ export function useKeyboardShortcuts({
         }
         case "-":
         case "_": {
-          // Zoom out
+          // Zoom out - ignore if already restoring to prevent capturing incorrect position
+          if (store.pendingScrollRestore) return;
           e.preventDefault();
           const { pageNum, position } = calculateCurrentPositionWithPage();
           store.setPendingScrollRestore(pageNum, position);
@@ -64,7 +66,8 @@ export function useKeyboardShortcuts({
           break;
         }
         case "0": {
-          // Reset to 100%
+          // Reset to 100% - ignore if already restoring to prevent capturing incorrect position
+          if (store.pendingScrollRestore) return;
           e.preventDefault();
           const { pageNum, position } = calculateCurrentPositionWithPage();
           store.setPendingScrollRestore(pageNum, position);
@@ -73,7 +76,8 @@ export function useKeyboardShortcuts({
         }
         case "f":
         case "F": {
-          // Fit to width
+          // Fit to width - ignore if already restoring to prevent capturing incorrect position
+          if (store.pendingScrollRestore) return;
           e.preventDefault();
           const { pageNum, position } = calculateCurrentPositionWithPage();
           store.setPendingScrollRestore(pageNum, position);

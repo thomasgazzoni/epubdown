@@ -20,6 +20,25 @@ export type PageStatus =
   | "stale" // Has bitmap but outdated (zoom/PPI changed)
   | "error";
 
+/**
+ * Tile information for pages that exceed canvas limits
+ */
+export interface TileInfo {
+  tileIndex: number; // 0-based index within page
+  pageNumber: number; // 1-based page number
+  // Source rectangle in PDF coordinates (points)
+  srcX: number;
+  srcY: number;
+  srcWidth: number;
+  srcHeight: number;
+  // Target dimensions in pixels (including devicePixelRatio)
+  targetPx: { w: number; h: number };
+  // Display dimensions in CSS pixels
+  displayCss: { w: number; h: number };
+  // Effective PPI for this tile
+  ppi: number;
+}
+
 export interface PageData {
   pageNumber: number; // 1-based page number
   status: PageStatus;
@@ -36,6 +55,10 @@ export interface PageData {
   renderDurationMs?: number;
   // Bitmap tracking
   hasFull?: boolean; // Has full-res bitmap at current PPI
+  // Tiling support
+  isTiled?: boolean; // Whether this page uses tiles
+  tiles?: TileInfo[]; // Tile metadata (if isTiled)
+  tilesLoaded?: Set<number>; // Which tile indices have bitmaps
 }
 
 /**
@@ -100,8 +123,39 @@ export class PdfStateStore {
         Math.round(containerCssWidth * zoomPercent),
       );
       const effectivePpi = (targetCssW * 72) / page.wPt;
-      const changed = this.updatePixelDimensionsWithPpi(page, effectivePpi);
-      anyChanged = anyChanged || changed;
+
+      // Check if tiling is needed before updating dimensions
+      const needsTiling = this.needsTiling(
+        page.wPt,
+        page.hPt,
+        effectivePpi,
+        targetCssW,
+      );
+
+      if (needsTiling) {
+        // Calculate tiles instead of updating as single page
+        const tiles = this.calculateTiles(
+          page.pageNumber,
+          page.wPt,
+          page.hPt,
+          effectivePpi,
+          targetCssW,
+        );
+        this.setPageTiles(page.pageNumber, tiles);
+
+        // Update page dimensions to be total of all tiles
+        this.updatePageDimensionsFromTiles(page, tiles);
+        anyChanged = true;
+      } else {
+        // Clear tiles if previously tiled
+        if (page.isTiled) {
+          this.clearPageTiles(page.pageNumber);
+          anyChanged = true;
+        }
+        // Normal single-page rendering
+        const changed = this.updatePixelDimensionsWithPpi(page, effectivePpi);
+        anyChanged = anyChanged || changed;
+      }
     }
     // Only mark bitmaps stale if dimensions actually changed
     if (anyChanged) {
@@ -227,6 +281,165 @@ export class PdfStateStore {
   setPageHasFull(pageNum: number, hasFull: boolean) {
     const page = this.getOrCreatePage(pageNum);
     page.hasFull = hasFull;
+  }
+
+  /**
+   * Set tile configuration for a page
+   */
+  setPageTiles(pageNum: number, tiles: TileInfo[]) {
+    const page = this.getOrCreatePage(pageNum);
+    page.isTiled = true;
+    page.tiles = tiles;
+    page.tilesLoaded = new Set();
+  }
+
+  /**
+   * Mark a specific tile as loaded
+   */
+  markTileLoaded(pageNum: number, tileIndex: number) {
+    const page = this.pages.get(pageNum);
+    if (!page) return;
+    if (!page.tilesLoaded) {
+      page.tilesLoaded = new Set();
+    }
+    page.tilesLoaded.add(tileIndex);
+  }
+
+  /**
+   * Mark a specific tile as unloaded
+   */
+  markTileUnloaded(pageNum: number, tileIndex: number) {
+    const page = this.pages.get(pageNum);
+    if (!page?.tilesLoaded) return;
+    page.tilesLoaded.delete(tileIndex);
+  }
+
+  /**
+   * Clear all tile data for a page
+   */
+  clearPageTiles(pageNum: number) {
+    const page = this.pages.get(pageNum);
+    if (!page) return;
+    page.isTiled = false;
+    page.tiles = undefined;
+    page.tilesLoaded = undefined;
+  }
+
+  /**
+   * Check if a page needs tiling based on dimensions and PPI
+   * @param wPt Page width in points
+   * @param hPt Page height in points
+   * @param effectivePpi Effective PPI for rendering
+   * @param targetCssW Target CSS width
+   * @returns true if tiling is needed
+   */
+  private needsTiling(
+    wPt: number,
+    hPt: number,
+    effectivePpi: number,
+    targetCssW: number,
+  ): boolean {
+    const renderPpi = effectivePpi * this.devicePixelRatio;
+
+    // Calculate what the pixel dimensions would be
+    const wPx = Math.floor((wPt * renderPpi) / 72);
+    const hPx = Math.floor((hPt * renderPpi) / 72);
+
+    // Safe canvas limit (use 12288 to stay well under 16384 browser limit)
+    const SAFE_CANVAS_LIMIT = 12288;
+
+    // Tile if either dimension exceeds safe limit
+    if (wPx > SAFE_CANVAS_LIMIT || hPx > SAFE_CANVAS_LIMIT) {
+      console.log(
+        `[PdfState] Page needs tiling: ${wPx}x${hPx} exceeds ${SAFE_CANVAS_LIMIT}`,
+      );
+      return true;
+    }
+
+    return false;
+  }
+
+  /**
+   * Calculate tiles for a page that exceeds canvas limits
+   * @param pageNumber Page number (1-based)
+   * @param wPt Page width in points
+   * @param hPt Page height in points
+   * @param effectivePpi Effective PPI for rendering
+   * @param targetCssW Target CSS width
+   * @returns Array of tile information
+   */
+  private calculateTiles(
+    pageNumber: number,
+    wPt: number,
+    hPt: number,
+    effectivePpi: number,
+    targetCssW: number,
+  ): TileInfo[] {
+    const TILE_HEIGHT_PX = 8192; // Safe tile height in device pixels
+    const dpr = this.devicePixelRatio;
+    const renderPpi = effectivePpi * dpr;
+
+    // Calculate total height in pixels
+    const totalHeightPx = Math.floor((hPt * renderPpi) / 72);
+
+    // Calculate how many tiles we need
+    const tileCount = Math.ceil(totalHeightPx / TILE_HEIGHT_PX);
+
+    console.log(
+      `[PdfState] Calculating ${tileCount} tiles for page ${pageNumber} (${totalHeightPx}px height)`,
+    );
+
+    const tiles: TileInfo[] = [];
+
+    // Divide page height equally among tiles (in PDF coordinates)
+    const tileHeightPt = hPt / tileCount;
+
+    for (let i = 0; i < tileCount; i++) {
+      const srcY = i * tileHeightPt;
+      const srcH = Math.min(tileHeightPt, hPt - srcY);
+
+      // Calculate pixel dimensions for this tile
+      const targetW = Math.floor((wPt * renderPpi) / 72);
+      const targetH = Math.floor((srcH * renderPpi) / 72);
+
+      tiles.push({
+        tileIndex: i,
+        pageNumber,
+        srcX: 0,
+        srcY,
+        srcWidth: wPt,
+        srcHeight: srcH,
+        targetPx: {
+          w: targetW,
+          h: targetH,
+        },
+        displayCss: {
+          w: Math.round(targetW / dpr),
+          h: Math.round(targetH / dpr),
+        },
+        ppi: effectivePpi,
+      });
+    }
+
+    return tiles;
+  }
+
+  /**
+   * Update page dimensions based on tiles
+   * Sets the page's wCss/hCss to the total of all tiles
+   * @param page Page data to update
+   * @param tiles Tiles for this page
+   */
+  private updatePageDimensionsFromTiles(page: PageData, tiles: TileInfo[]) {
+    if (tiles.length === 0) return;
+
+    // Width comes from first tile
+    page.wCss = tiles[0]?.displayCss.w;
+    page.wPx = tiles[0]?.targetPx.w;
+
+    // Height is sum of all tiles
+    page.hCss = tiles.reduce((sum, tile) => sum + tile.displayCss.h, 0);
+    page.hPx = tiles.reduce((sum, tile) => sum + tile.targetPx.h, 0);
   }
 
   /**

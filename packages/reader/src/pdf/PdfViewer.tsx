@@ -623,9 +623,6 @@ export const PdfViewer = observer(({ store }: PdfViewerProps) => {
     );
     lastPendingRestoreRef.current = store.pendingScrollRestore;
 
-    // Clear the pending restore
-    store.clearPendingScrollRestore();
-
     // Use triple RAF + setTimeout to ensure layout has fully settled after zoom
     // Zoom causes many pages to re-render with new dimensions, which can take time
     requestAnimationFrame(() => {
@@ -637,6 +634,11 @@ export const PdfViewer = observer(({ store }: PdfViewerProps) => {
               console.log(
                 `[PdfViewer] Scroll position restored to page ${pageNum}`,
               );
+
+              // Clear pending restore AFTER scroll completes
+              // This ensures pendingScrollRestore blocks setCurrentPage/writeUrl
+              // during the entire dimension recalculation period
+              store.clearPendingScrollRestore();
             });
           }, 100);
         });

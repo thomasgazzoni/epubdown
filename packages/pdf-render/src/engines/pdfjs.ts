@@ -113,6 +113,39 @@ export function createPdfjsEngine(): PDFEngine {
                 viewport,
               }).promise;
             },
+            async renderTileToCanvas(canvas, ppi, tile) {
+              const scale = (ppi ?? 96) / 72;
+
+              // Create viewport for the full page
+              const fullViewport = page.getViewport({ scale });
+
+              // Calculate tile dimensions in pixels
+              const tileWPx = Math.max(1, Math.floor(tile.srcWidth * scale));
+              const tileHPx = Math.max(1, Math.floor(tile.srcHeight * scale));
+
+              // Set canvas size to tile dimensions
+              canvas.width = tileWPx;
+              canvas.height = tileHPx;
+
+              const ctx = canvas.getContext("2d");
+              if (!ctx) throw new Error("Canvas 2D context unavailable");
+
+              // Save context state
+              ctx.save();
+
+              // Translate to render only the tile region
+              // Move the canvas origin up by tile.srcY to show the correct portion
+              ctx.translate(0, -tile.srcY * scale);
+
+              // Render the full page (PDF.js will clip to canvas bounds)
+              await page.render({
+                canvasContext: ctx as CanvasRenderingContext2D,
+                viewport: fullViewport,
+              }).promise;
+
+              // Restore context state
+              ctx.restore();
+            },
             destroy() {
               page.cleanup();
             },

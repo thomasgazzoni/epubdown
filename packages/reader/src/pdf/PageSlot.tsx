@@ -21,158 +21,161 @@ const CanvasHost: React.FC<{
   width: number;
   height: number;
 }> = ({ bitmap, canvas, width, height }) => {
-  const hostRef = useRef<HTMLDivElement>(null);
   const bitmapCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const currentCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const placeholderRef = useRef<HTMLDivElement | null>(null);
-  // Track which element is currently mounted to avoid unnecessary DOM operations
-  const mountedElementRef = useRef<HTMLElement | null>(null);
+  const canvasContainerRef = useRef<HTMLDivElement>(null);
   // Track if content is ready to display (waits for paint)
   const [isContentReady, setIsContentReady] = useState(false);
   // Track previous bitmap/canvas to detect actual changes
   const prevBitmapRef = useRef<ImageBitmap | null>(null);
   const prevCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
+  // Check if bitmap/canvas actually changed (not just re-rendered)
+  const bitmapChanged = bitmap !== prevBitmapRef.current;
+  const canvasChanged = canvas !== prevCanvasRef.current;
+  prevBitmapRef.current = bitmap;
+  prevCanvasRef.current = canvas;
+
+  // Render bitmap to canvas when bitmap or dimensions change
   useEffect(() => {
-    const host = hostRef.current;
-    if (!host) return;
+    if (!bitmap) return;
 
-    // Check if bitmap/canvas actually changed (not just re-rendered)
-    // This prevents loading overlay from flashing when PageSlotWrapper re-renders
-    // with the same cached bitmap (e.g., during scroll when hasFull updates)
-    const bitmapChanged = bitmap !== prevBitmapRef.current;
-    const canvasChanged = canvas !== prevCanvasRef.current;
-    prevBitmapRef.current = bitmap;
-    prevCanvasRef.current = canvas;
+    // Create or reuse bitmap canvas
+    if (!bitmapCanvasRef.current) {
+      bitmapCanvasRef.current = document.createElement("canvas");
+    }
 
-    const mount = (el: HTMLElement, onMounted?: () => void) => {
-      // Skip if this exact element is already mounted
-      if (mountedElementRef.current === el) {
-        onMounted?.();
-        return;
+    const bmCanvas = bitmapCanvasRef.current;
+    bmCanvas.style.maxWidth = "100%";
+    bmCanvas.style.height = "auto";
+    bmCanvas.style.display = "block";
+
+    // Get device pixel ratio for HiDPI rendering
+    const dpr = window.devicePixelRatio || 1;
+
+    // Always size the *backing store* to device pixels,
+    // and the *CSS size* to layout pixels for crisp rendering
+    const targetW = Math.max(1, Math.round(width * dpr));
+    const targetH = Math.max(1, Math.round(height * dpr));
+
+    const sizeChanged =
+      bmCanvas.width !== targetW || bmCanvas.height !== targetH;
+    if (sizeChanged) {
+      bmCanvas.width = targetW;
+      bmCanvas.height = targetH;
+      bmCanvas.style.width = `${width}px`;
+      bmCanvas.style.height = `${height}px`;
+    }
+
+    // Update canvas content when bitmap changes or size changes
+    const ctx2d = bmCanvas.getContext("2d");
+    if (ctx2d && (bitmapChanged || sizeChanged)) {
+      ctx2d.imageSmoothingEnabled = true;
+      ctx2d.clearRect(0, 0, targetW, targetH);
+      ctx2d.drawImage(bitmap, 0, 0, targetW, targetH);
+    }
+
+    // Only show loading overlay if we actually need a repaint
+    if (bitmapChanged || sizeChanged) {
+      setIsContentReady(false);
+      // Use double RAF to ensure canvas is actually painted
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          setIsContentReady(true);
+        });
+      });
+    } else {
+      setIsContentReady(true);
+    }
+  }, [bitmap, width, height, bitmapChanged]);
+
+  // Mount bitmap canvas to container
+  useEffect(() => {
+    const container = canvasContainerRef.current;
+    const bmCanvas = bitmapCanvasRef.current;
+    if (!container || !bitmap || !bmCanvas) return;
+
+    // Safely append canvas if not already a child
+    if (!container.contains(bmCanvas)) {
+      // Clear any existing children first
+      while (container.firstChild) {
+        container.removeChild(container.firstChild);
       }
+      container.appendChild(bmCanvas);
+    }
 
-      // Remove current child if different
-      while (host.firstChild) {
-        host.removeChild(host.firstChild);
+    return () => {
+      // Cleanup: remove canvas when unmounting or when bitmap becomes null
+      if (container.contains(bmCanvas)) {
+        container.removeChild(bmCanvas);
       }
-
-      // Mount new element
-      host.appendChild(el);
-      mountedElementRef.current = el;
-      onMounted?.();
     };
+  }, [bitmap]);
 
-    // Priority 1: Bitmap via 2D context drawImage
-    if (bitmap) {
-      // Create or reuse bitmap canvas
-      if (!bitmapCanvasRef.current) {
-        const bmCanvas = document.createElement("canvas");
-        bmCanvas.style.maxWidth = "100%";
-        bmCanvas.style.height = "auto";
-        bmCanvas.style.display = "block";
-        bitmapCanvasRef.current = bmCanvas;
+  // Mount external canvas to container
+  useEffect(() => {
+    const container = canvasContainerRef.current;
+    if (!container || !canvas) return;
+
+    canvas.style.maxWidth = "100%";
+    canvas.style.height = "auto";
+    canvas.style.display = "block";
+
+    // Safely append canvas if not already a child
+    if (!container.contains(canvas)) {
+      // Clear any existing children first
+      while (container.firstChild) {
+        container.removeChild(container.firstChild);
       }
+      container.appendChild(canvas);
+    }
 
-      const bmCanvas = bitmapCanvasRef.current;
-
-      // Get device pixel ratio for HiDPI rendering
-      const dpr = window.devicePixelRatio || 1;
-
-      // Always size the *backing store* to device pixels,
-      // and the *CSS size* to layout pixels for crisp rendering
-      const targetW = Math.max(1, Math.round(width * dpr));
-      const targetH = Math.max(1, Math.round(height * dpr));
-
-      const sizeChanged =
-        bmCanvas.width !== targetW || bmCanvas.height !== targetH;
-      if (sizeChanged) {
-        bmCanvas.width = targetW;
-        bmCanvas.height = targetH;
-        bmCanvas.style.width = `${width}px`;
-        bmCanvas.style.height = `${height}px`;
-      }
-
-      // Update canvas content when bitmap changes or size changes
-      const ctx2d = bmCanvas.getContext("2d");
-      if (ctx2d && (bitmapChanged || sizeChanged)) {
-        ctx2d.imageSmoothingEnabled = true; // default; keep text crisp
-        ctx2d.clearRect(0, 0, targetW, targetH);
-        // Draw bitmap scaled to device pixels for crisp rendering
-        // Note: We use drawImage instead of transferFromImageBitmap because
-        // transferFromImageBitmap detaches the bitmap, making it unusable for
-        // caching. When navigating back and forth, components may unmount/remount
-        // and try to reuse already-detached bitmaps from cache. drawImage copies
-        // the pixel data, leaving the cached bitmap intact for reuse.
-        ctx2d.drawImage(bitmap, 0, 0, targetW, targetH);
-      }
-
-      // Only show loading overlay if we actually need a repaint
-      if (bitmapChanged || sizeChanged) {
-        setIsContentReady(false);
-        mount(bmCanvas, () => {
-          // Use double RAF to ensure canvas is actually painted
-          requestAnimationFrame(() => {
-            requestAnimationFrame(() => {
-              setIsContentReady(true);
-            });
-          });
+    // Only show loading overlay if canvas actually changed
+    if (canvasChanged) {
+      setIsContentReady(false);
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          setIsContentReady(true);
         });
-      } else {
-        // Same bitmap/size, just ensure it's mounted (already ready)
-        mount(bmCanvas, () => setIsContentReady(true));
+      });
+    } else {
+      setIsContentReady(true);
+    }
+
+    return () => {
+      // Cleanup: remove canvas when unmounting or when canvas changes
+      if (container.contains(canvas)) {
+        container.removeChild(canvas);
       }
-      currentCanvasRef.current = null;
-      return;
-    }
+    };
+  }, [canvas, canvasChanged]);
 
-    // Priority 2: Canvas fallback (engine-rendered)
-    if (canvas) {
-      canvas.style.maxWidth = "100%";
-      canvas.style.height = "auto";
-      canvas.style.display = "block";
-
-      // Only show loading overlay if canvas actually changed
-      if (canvasChanged) {
-        setIsContentReady(false);
-        mount(canvas, () => {
-          // Use double RAF to ensure canvas is actually painted
-          requestAnimationFrame(() => {
-            requestAnimationFrame(() => {
-              setIsContentReady(true);
-            });
-          });
-        });
-      } else {
-        // Same canvas, just ensure it's mounted (already ready)
-        mount(canvas, () => setIsContentReady(true));
-      }
-      currentCanvasRef.current = canvas;
-      return;
-    }
-
-    // Priority 3: Loading placeholder
-    if (!placeholderRef.current) {
-      const ph = document.createElement("div");
-      ph.className = "absolute inset-0 flex items-center justify-center";
-      ph.style.background = "#f5f5f5";
-      ph.style.border = "1px solid #ddd";
-      ph.innerHTML = '<span class="text-gray-400 text-sm">Loading...</span>';
-      placeholderRef.current = ph;
-    }
-    setIsContentReady(true); // Placeholder is immediately ready
-    mount(placeholderRef.current);
-    currentCanvasRef.current = null;
-  }, [bitmap, canvas, width, height]);
+  // Determine what to display
+  const hasContent = bitmap || canvas;
+  const showPlaceholder = !hasContent;
 
   return (
     <div
-      ref={hostRef}
       className="relative bg-white shadow-sm"
       style={{ width, height, maxWidth: "100%" }}
     >
+      {/* Canvas container - React manages this div, we manage its children imperatively */}
+      <div ref={canvasContainerRef} className="relative" />
+
+      {/* Placeholder */}
+      {showPlaceholder && (
+        <div
+          className="absolute inset-0 flex items-center justify-center"
+          style={{
+            background: "#f5f5f5",
+            border: "1px solid #ddd",
+          }}
+        >
+          <span className="text-gray-400 text-sm">Loading...</span>
+        </div>
+      )}
+
       {/* Loading overlay - stays visible until content is painted */}
-      {!isContentReady && (bitmap || canvas) && (
+      {!isContentReady && hasContent && (
         <div
           className="absolute inset-0 flex items-center justify-center"
           style={{
@@ -187,6 +190,53 @@ const CanvasHost: React.FC<{
     </div>
   );
 };
+
+/**
+ * TiledPageDisplay: Component for rendering tiled pages
+ * Displays multiple tiles stacked vertically
+ */
+const TiledPageDisplay: React.FC<{
+  pageData: PageData;
+  store: PdfReaderStore;
+  width: number;
+}> = observer(({ pageData, store, width }) => {
+  if (!pageData.tiles) return null;
+
+  const height = pageData.hCss ?? 792;
+
+  return (
+    <div
+      className="relative bg-white shadow-sm"
+      style={{ width, height, maxWidth: "100%" }}
+    >
+      {/* Stack tiles vertically */}
+      {pageData.tiles.map((tile) => {
+        // Trigger re-render when tiles are loaded (access .size to create MobX dependency)
+        void pageData.tilesLoaded?.size;
+
+        const bitmap = store.getTileBitmap(pageData.pageNumber, tile.tileIndex);
+        const canvas = store.getTileCanvas(pageData.pageNumber, tile.tileIndex);
+
+        return (
+          <div
+            key={`tile-${tile.tileIndex}`}
+            style={{
+              height: tile.displayCss.h,
+              position: "relative",
+            }}
+          >
+            <CanvasHost
+              bitmap={bitmap ?? null}
+              canvas={canvas ?? null}
+              width={tile.displayCss.w}
+              height={tile.displayCss.h}
+            />
+          </div>
+        );
+      })}
+    </div>
+  );
+});
 
 /**
  * PageSlotWrapper: Observer wrapper that fetches bitmap/canvas from store
@@ -206,6 +256,41 @@ export const PageSlotWrapper = observer(
     // Access observable flags to create MobX dependencies
     // This causes this wrapper to re-render when bitmaps become available
     void pageData.hasFull;
+    // For tiled pages, also observe tilesLoaded to trigger re-renders when tiles finish
+    void pageData.tilesLoaded?.size;
+
+    // Check if page is tiled
+    if (pageData.isTiled && pageData.tiles) {
+      // Render tiled page
+      const width = pageData.wCss ?? 612;
+      const height = pageData.hCss ?? 792;
+
+      return (
+        <div
+          data-index={pageData.pageNumber - 1}
+          data-page={pageData.pageNumber}
+          id={`page-${pageData.pageNumber}`}
+          className="pdf-page-slot mb-4 flex justify-center items-start"
+          style={{
+            height,
+            position: "relative",
+            contain: "content",
+            contentVisibility: "auto" as any,
+          }}
+          ref={slotRef}
+        >
+          {/* Page number label with tile info */}
+          <div className="absolute top-2 left-2 z-20 px-2 py-1 rounded text-xs font-mono bg-gray-800 text-white flex gap-2 items-center">
+            <span>{pageData.pageNumber}</span>
+            <span className="text-gray-400">
+              ({pageData.tiles.length} tiles)
+            </span>
+          </div>
+
+          <TiledPageDisplay pageData={pageData} store={store} width={width} />
+        </div>
+      );
+    }
 
     // Fetch bitmap and canvas from store (these Maps are non-observable)
     // But since this component re-renders when hasFull changes,

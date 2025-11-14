@@ -185,6 +185,62 @@ class PdfiumEngine implements PDFEngine {
             ctx.putImageData(img, 0, 0);
             instance.FPDFBitmap_Destroy(bmp);
           },
+          async renderTileToCanvas(canvas, ppi, tile) {
+            const scale = (ppi ?? 96) / 72;
+            // Calculate tile dimensions in pixels
+            const tileWPx = Math.max(1, Math.floor(tile.srcWidth * scale));
+            const tileHPx = Math.max(1, Math.floor(tile.srcHeight * scale));
+
+            // Create bitmap for just the tile region
+            const bmp = instance.FPDFBitmap_Create(tileWPx, tileHPx, 0);
+            instance.FPDFBitmap_FillRect(
+              bmp,
+              0,
+              0,
+              tileWPx,
+              tileHPx,
+              0xffffffff,
+            );
+
+            // Render with offset - translate the page to bring tile region to origin
+            // offsetY is negative to move the page content up
+            const offsetX = 0;
+            const offsetY = -Math.floor(tile.srcY * scale);
+
+            // Full page dimensions in pixels for rendering context
+            const fullWPx = Math.floor(wPt * scale);
+            const fullHPx = Math.floor(hPt * scale);
+
+            // Render the page with offset so the tile region appears at (0,0)
+            instance.FPDF_RenderPageBitmap(
+              bmp,
+              page,
+              offsetX,
+              offsetY,
+              fullWPx,
+              fullHPx,
+              0,
+              16,
+            );
+
+            // Copy bitmap to canvas
+            const len = tileWPx * tileHPx * 4;
+            const bufPtr = instance.FPDFBitmap_GetBuffer(bmp);
+            const heap = core.HEAPU8 as Uint8Array;
+            canvas.width = tileWPx;
+            canvas.height = tileHPx;
+            const ctx = canvas.getContext("2d");
+            if (!ctx) {
+              instance.FPDFBitmap_Destroy(bmp);
+              throw new Error("Canvas 2D context unavailable");
+            }
+            const img = ctx.createImageData(tileWPx, tileHPx);
+            img.data.set(
+              new Uint8ClampedArray(heap.buffer, heap.byteOffset + bufPtr, len),
+            );
+            ctx.putImageData(img, 0, 0);
+            instance.FPDFBitmap_Destroy(bmp);
+          },
           destroy() {
             instance.FPDF_ClosePage(page);
           },

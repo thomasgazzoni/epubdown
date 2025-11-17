@@ -350,8 +350,13 @@ export const PdfViewer = observer(({ store }: PdfViewerProps) => {
 
     resizeObserver.observe(contentRef.current);
 
-    // Manually trigger initial measurement (ResizeObserver doesn't fire for initial size)
-    const initialWidth = contentRef.current.getBoundingClientRect().width;
+    // Manually trigger initial measurement
+    // Use clientWidth minus padding to get content area (same as ResizeObserver's contentRect)
+    const computedStyle = getComputedStyle(contentRef.current);
+    const paddingLeft = parseFloat(computedStyle.paddingLeft) || 0;
+    const paddingRight = parseFloat(computedStyle.paddingRight) || 0;
+    const initialWidth =
+      contentRef.current.clientWidth - paddingLeft - paddingRight;
     if (initialWidth > 0) {
       handleWidthChange(initialWidth);
     }

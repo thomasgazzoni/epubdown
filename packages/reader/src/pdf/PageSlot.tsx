@@ -45,8 +45,6 @@ const CanvasHost: React.FC<{
     }
 
     const bmCanvas = bitmapCanvasRef.current;
-    bmCanvas.style.maxWidth = "100%";
-    bmCanvas.style.height = "auto";
     bmCanvas.style.display = "block";
 
     // Get device pixel ratio for HiDPI rendering
@@ -116,8 +114,6 @@ const CanvasHost: React.FC<{
     const container = canvasContainerRef.current;
     if (!container || !canvas) return;
 
-    canvas.style.maxWidth = "100%";
-    canvas.style.height = "auto";
     canvas.style.display = "block";
 
     // Safely append canvas if not already a child
@@ -154,10 +150,7 @@ const CanvasHost: React.FC<{
   const showPlaceholder = !hasContent;
 
   return (
-    <div
-      className="relative bg-white shadow-sm"
-      style={{ width, height, maxWidth: "100%" }}
-    >
+    <div className="relative bg-white shadow-sm" style={{ width, height }}>
       {/* Canvas container - React manages this div, we manage its children imperatively */}
       <div ref={canvasContainerRef} className="relative" />
 
@@ -205,10 +198,7 @@ const TiledPageDisplay: React.FC<{
   const height = pageData.hCss ?? 792;
 
   return (
-    <div
-      className="relative bg-white shadow-sm"
-      style={{ width, height, maxWidth: "100%" }}
-    >
+    <div className="relative bg-white shadow-sm" style={{ width, height }}>
       {/* Stack tiles vertically */}
       {pageData.tiles.map((tile) => {
         // Trigger re-render when tiles are loaded (access .size to create MobX dependency)

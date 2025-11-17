@@ -670,11 +670,9 @@ export const PdfViewer = observer(({ store }: PdfViewerProps) => {
 
   const pageCount = store.pageCount;
 
-  // Container width adapts to content but never exceeds viewport
+  // Container width adapts to content - allow horizontal scroll when zoomed beyond viewport
   const containerMaxWidth =
-    store.maxPageWidth > 0
-      ? `min(${store.maxPageWidth + 32}px, 100vw - 2rem)`
-      : "min(100vw - 2rem, 1200px)";
+    store.maxPageWidth > 0 ? `${store.maxPageWidth + 32}px` : "1200px";
 
   return (
     <div

@@ -1536,9 +1536,13 @@ export class PdfReaderStore {
   private updateRenderWindow() {
     if (!this.queue) return;
 
+    // During zoom operations, use the target page from pendingScrollRestore
+    // This prevents rendering pages at the wrong scroll position
+    const centerPage = this.pendingScrollRestore?.pageNum ?? this.currentPage;
+
     // Render current page ± 1 page (immediate neighbors only)
     const windowConfig = {
-      center: this.currentPage,
+      center: centerPage,
       before: 1,
       after: 1,
       totalPages: this.pageCount,

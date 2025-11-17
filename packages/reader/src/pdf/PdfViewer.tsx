@@ -634,24 +634,20 @@ export const PdfViewer = observer(({ store }: PdfViewerProps) => {
     );
     lastPendingRestoreRef.current = store.pendingScrollRestore;
 
-    // Use triple RAF + setTimeout to ensure layout has fully settled after zoom
-    // Zoom causes many pages to re-render with new dimensions, which can take time
+    // Use double RAF to ensure layout has settled after zoom
+    // The overlay hides the visual jump, so we can restore quickly
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          setTimeout(() => {
-            withProgrammaticScroll(() => {
-              restoreScrollPosition(pageNum, position);
-              console.log(
-                `[PdfViewer] Scroll position restored to page ${pageNum}`,
-              );
+        withProgrammaticScroll(() => {
+          restoreScrollPosition(pageNum, position);
+          console.log(
+            `[PdfViewer] Scroll position restored to page ${pageNum}`,
+          );
 
-              // Clear pending restore AFTER scroll completes
-              // This ensures pendingScrollRestore blocks setCurrentPage/writeUrl
-              // during the entire dimension recalculation period
-              store.clearPendingScrollRestore();
-            });
-          }, 100);
+          // Clear pending restore AFTER scroll completes
+          // This ensures pendingScrollRestore blocks setCurrentPage/writeUrl
+          // during the entire dimension recalculation period
+          store.clearPendingScrollRestore();
         });
       });
     });
@@ -691,8 +687,8 @@ export const PdfViewer = observer(({ store }: PdfViewerProps) => {
         onToggle={() => setIsDebugOpen(!isDebugOpen)}
       />
 
-      {/* Loading overlay during page restoration */}
-      {store.restoration.shouldShowOverlay && (
+      {/* Loading overlay during page restoration or zoom operations */}
+      {(store.restoration.shouldShowOverlay || store.pendingScrollRestore) && (
         <div className="absolute inset-0 z-50 bg-gray-100 flex items-center justify-center">
           <div className="text-gray-500">Loading PDF…</div>
         </div>

@@ -262,6 +262,7 @@ export const PageSlotWrapper = observer(
           id={`page-${pageData.pageNumber}`}
           className="pdf-page-slot mb-4 flex justify-center items-start"
           style={{
+            minWidth: width,
             height,
             position: "relative",
             contain: "content",
@@ -338,6 +339,7 @@ const PageSlotComponent = observer(
         id={`page-${pageData.pageNumber}`}
         className="pdf-page-slot mb-4 flex justify-center items-start"
         style={{
+          minWidth: width,
           height,
           position: "relative",
           // Performance wins for offscreen shells:

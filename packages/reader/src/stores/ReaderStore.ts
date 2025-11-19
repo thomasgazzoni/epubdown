@@ -328,92 +328,76 @@ export class ReaderStore {
   async copyMultipleChapters(selectedNavIndices: number[]): Promise<void> {
     if (!this.navItems || selectedNavIndices.length === 0) return;
 
-    console.log("=== Copy Multiple Chapters Debug ===");
-    console.log("Selected nav indices:", selectedNavIndices);
-    console.log("Total navItems:", this.navItems.length);
-    console.log("Total chapters:", this.chapters.length);
-
     try {
-      // Map TOC nav items to chapter indices
-      const chapterIndicesSet = new Set<number>();
+      // Map TOC nav items to chapters, keeping track of which nav items correspond to which chapters
+      const chapterMap = new Map<
+        number,
+        { chapter: DOMFile; navItems: FlatNavItem[] }
+      >();
+
       for (const navIdx of selectedNavIndices) {
         const navItem = this.navItems[navIdx];
         if (navItem) {
-          console.log(
-            `Nav ${navIdx}: "${navItem.label}" -> path: ${navItem.path}`,
-          );
           const chapterIdx = this.findChapterIndexByPath(navItem.path);
-          console.log(`  -> Chapter index: ${chapterIdx}`);
+
           if (chapterIdx !== -1) {
-            chapterIndicesSet.add(chapterIdx);
+            const chapter = this.chapters[chapterIdx];
+            if (chapter) {
+              if (!chapterMap.has(chapterIdx)) {
+                chapterMap.set(chapterIdx, { chapter, navItems: [] });
+              }
+              chapterMap.get(chapterIdx)!.navItems.push(navItem);
+            }
           }
         }
       }
 
-      // Convert to sorted array
-      const chapterIndices = Array.from(chapterIndicesSet).sort(
-        (a, b) => a - b,
+      // Sort by chapter index to maintain order
+      const sortedEntries = Array.from(chapterMap.entries()).sort(
+        ([a], [b]) => a - b,
       );
 
-      console.log("Final chapter indices to copy:", chapterIndices);
+      if (sortedEntries.length === 0) return;
 
-      if (chapterIndices.length === 0) return;
-
-      // Build the markdown content for all selected chapters
-      const chapterContents: string[] = [];
-      for (const chapterIdx of chapterIndices) {
-        const chapter = this.chapters[chapterIdx];
-        if (!chapter) {
-          console.warn(`Chapter ${chapterIdx} not found!`);
-          continue;
-        }
-
-        console.log(
-          `Processing chapter ${chapterIdx}: ${chapter.name} (${chapter.path})`,
-        );
-
+      // Convert each chapter to markdown
+      const chapterContents: Array<{ title: string; content: string }> = [];
+      for (const [chapterIdx, { chapter, navItems }] of sortedEntries) {
         const converter = ContentToMarkdown.create({ basePath: chapter.base });
         const markdown = await converter.convertXMLFile(chapter);
 
-        // Get chapter title from TOC or use filename
-        const chapterTitle =
-          this.chapterLabel(chapterIdx) ||
-          chapter.name ||
-          `Chapter ${chapterIdx + 1}`;
-
-        console.log(
-          `  Title: ${chapterTitle}, Content length: ${markdown.length}`,
-        );
-
-        // Format with heading
-        chapterContents.push(`# ${chapterTitle}\n\n${markdown}`);
+        // Use the first nav item's label as the chapter title
+        // If multiple nav items point to the same chapter, we could list them all,
+        // but for now we'll just use the first one
+        const label = navItems[0]?.label || `Chapter ${chapterIdx + 1}`;
+        chapterContents.push({ title: label, content: markdown });
       }
 
-      console.log(`Total chapters processed: ${chapterContents.length}`);
+      // Build the combined content string
+      const multipleChaptersContent = chapterContents
+        .map((ch) => `## ${ch.title}\n\n${ch.content}`)
+        .join("\n\n---\n\n");
 
-      // Join all chapters with separators
-      const multipleChaptersContent = chapterContents.join("\n\n---\n\n");
-
-      // Use template to format final output
-      const template = this.templates.multipleChapters.find(
-        (t) => t.id === "copy-multiple-chapters",
-      );
-
-      if (template) {
-        // Create enhanced context with multipleChaptersContent
-        const context = {
-          bookTitle: this.metadata?.title || "Unknown Book",
-          bookAuthor: this.metadata?.creator || this.metadata?.author || "",
-          multipleChaptersContent,
-        };
-        const output = await template.render(context);
-        copyToClipboard(output);
-      } else {
-        // Fallback: just copy the concatenated content
+      // Find the template for multiple chapters
+      const template = this.templates.multipleChapters?.[0];
+      if (!template) {
+        // Fallback: just copy the combined content
         copyToClipboard(multipleChaptersContent);
+        return;
       }
+
+      // Create a context with the multiple chapters content
+      const context = {
+        bookTitle: this.metadata?.title || "Unknown Book",
+        bookAuthor:
+          this.metadata?.creator || this.metadata?.author || "Unknown Author",
+        multipleChaptersContent,
+      };
+
+      // Render template with context
+      const output = await template.render(context);
+      copyToClipboard(output);
     } catch (error) {
-      console.error("Error copying multiple chapters:", error);
+      console.error("Failed to copy multiple chapters:", error);
       throw error;
     }
   }

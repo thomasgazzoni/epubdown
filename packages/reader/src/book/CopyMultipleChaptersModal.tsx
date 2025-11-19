@@ -1,5 +1,5 @@
 import { observer } from "mobx-react-lite";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { FlatNavItem } from "@epubdown/core";
 
@@ -14,13 +14,21 @@ export const CopyMultipleChaptersModal = observer(
   ({ isOpen, navItems, onClose, onCopy }: CopyMultipleChaptersModalProps) => {
     const [selected, setSelected] = useState<Set<number>>(new Set());
     const [anchorIndex, setAnchorIndex] = useState<number | null>(null);
+    const [focusedIndex, setFocusedIndex] = useState<number>(0);
     const [isCopying, setIsCopying] = useState(false);
+    const listContainerRef = useRef<HTMLDivElement>(null);
+    const itemRefs = useRef<Map<number, HTMLLabelElement>>(new Map());
 
-    // Reset selection when modal opens
+    // Reset selection and focus when modal opens
     useEffect(() => {
       if (isOpen) {
         setSelected(new Set());
         setAnchorIndex(null);
+        setFocusedIndex(0);
+        // Focus on the list container after a brief delay
+        setTimeout(() => {
+          listContainerRef.current?.focus();
+        }, 100);
       }
     }, [isOpen]);
 
@@ -39,6 +47,15 @@ export const CopyMultipleChaptersModal = observer(
         document.body.style.overflow = originalOverflow;
       };
     }, [isOpen]);
+
+    // Scroll focused item into view
+    useEffect(() => {
+      if (!isOpen) return;
+      const itemElement = itemRefs.current.get(focusedIndex);
+      if (itemElement) {
+        itemElement.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      }
+    }, [focusedIndex, isOpen]);
 
     // Handle keyboard shortcuts and prevent propagation to background
     useEffect(() => {
@@ -63,12 +80,39 @@ export const CopyMultipleChaptersModal = observer(
           }
           return;
         }
+
+        // Arrow key navigation
+        if (e.key === "ArrowDown") {
+          e.preventDefault();
+          setFocusedIndex((prev) => Math.min(prev + 1, navItems.length - 1));
+          return;
+        }
+
+        if (e.key === "ArrowUp") {
+          e.preventDefault();
+          setFocusedIndex((prev) => Math.max(prev - 1, 0));
+          return;
+        }
+
+        // Space to toggle selection
+        if (e.key === " " || e.key === "Spacebar") {
+          e.preventDefault();
+          handleCheckboxClick(focusedIndex, e.shiftKey);
+          return;
+        }
+
+        // Enter to toggle selection
+        if (e.key === "Enter" && !e.metaKey && !e.ctrlKey) {
+          e.preventDefault();
+          handleCheckboxClick(focusedIndex, e.shiftKey);
+          return;
+        }
       };
 
       // Use capture phase to intercept all keyboard events before they reach other handlers
       document.addEventListener("keydown", handleKeyDown, true);
       return () => document.removeEventListener("keydown", handleKeyDown, true);
-    }, [isOpen, selected, isCopying]);
+    }, [isOpen, selected, isCopying, focusedIndex, navItems.length]);
 
     const handleCheckboxClick = (idx: number, isShift: boolean) => {
       const newSelected = new Set(selected);
@@ -101,6 +145,7 @@ export const CopyMultipleChaptersModal = observer(
         setAnchorIndex(idx);
       }
 
+      setFocusedIndex(idx);
       setSelected(newSelected);
     };
 
@@ -155,10 +200,11 @@ export const CopyMultipleChaptersModal = observer(
           <div className="px-6 py-3 bg-gray-50 border-b border-gray-200 text-sm text-gray-600">
             <div className="flex flex-col gap-1">
               <div>
-                <strong>Tip:</strong> Click checkboxes to select chapters
+                <strong>Navigation:</strong> ↑↓ arrows to move, Space/Enter to
+                toggle
               </div>
               <div>
-                <strong>Shift+click:</strong> Select or deselect a range
+                <strong>Shift+Space:</strong> Select or deselect a range
               </div>
               <div>
                 <strong>⌘+Enter:</strong> Copy selected chapters
@@ -168,8 +214,14 @@ export const CopyMultipleChaptersModal = observer(
 
           {/* Chapter List */}
           <div
-            className="overflow-y-auto px-6 py-4"
-            style={{ maxHeight: "calc(80vh - 220px)" }}
+            ref={listContainerRef}
+            tabIndex={0}
+            className="overflow-y-auto px-6 py-4 outline-none"
+            style={{
+              maxHeight: "calc(80vh - 220px)",
+              userSelect: "none",
+              WebkitUserSelect: "none",
+            }}
           >
             {navItems.length === 0 ? (
               <div className="text-center text-gray-500 py-8">
@@ -179,14 +231,22 @@ export const CopyMultipleChaptersModal = observer(
               <div className="space-y-0.5">
                 {navItems.map((item, idx) => {
                   const isSelected = selected.has(idx);
+                  const isFocused = focusedIndex === idx;
                   const indentPx = Math.max(0, item.level - 1) * 16;
 
                   return (
                     <label
                       key={idx}
+                      ref={(el) => {
+                        if (el) {
+                          itemRefs.current.set(idx, el);
+                        } else {
+                          itemRefs.current.delete(idx);
+                        }
+                      }}
                       className={`flex items-center gap-3 px-3 py-1.5 rounded cursor-pointer hover:bg-gray-100 transition-colors ${
                         isSelected ? "bg-blue-50" : ""
-                      }`}
+                      } ${isFocused ? "ring-2 ring-blue-400 ring-inset" : ""}`}
                       onClick={(e) => {
                         e.preventDefault();
                         handleCheckboxClick(idx, e.shiftKey);
@@ -197,6 +257,7 @@ export const CopyMultipleChaptersModal = observer(
                         checked={isSelected}
                         onChange={() => {}}
                         className="w-4 h-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500 cursor-pointer"
+                        tabIndex={-1}
                       />
                       <span
                         className="text-sm text-gray-900 flex-1 truncate"

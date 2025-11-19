@@ -155,6 +155,8 @@ export const CopyMultipleChaptersModal = observer(
       setIsCopying(true);
       try {
         const selectedIndices = Array.from(selected).sort((a, b) => a - b);
+        console.log("Modal: Selected indices from Set:", selectedIndices);
+        console.log("Modal: Selected Set contents:", Array.from(selected));
         await onCopy(selectedIndices);
         onClose();
       } catch (error) {

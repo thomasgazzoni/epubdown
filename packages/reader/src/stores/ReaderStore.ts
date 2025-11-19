@@ -328,13 +328,22 @@ export class ReaderStore {
   async copyMultipleChapters(selectedNavIndices: number[]): Promise<void> {
     if (!this.navItems || selectedNavIndices.length === 0) return;
 
+    console.log("=== Copy Multiple Chapters Debug ===");
+    console.log("Selected nav indices:", selectedNavIndices);
+    console.log("Total navItems:", this.navItems.length);
+    console.log("Total chapters:", this.chapters.length);
+
     try {
       // Map TOC nav items to chapter indices
       const chapterIndicesSet = new Set<number>();
       for (const navIdx of selectedNavIndices) {
         const navItem = this.navItems[navIdx];
         if (navItem) {
+          console.log(
+            `Nav ${navIdx}: "${navItem.label}" -> path: ${navItem.path}`,
+          );
           const chapterIdx = this.findChapterIndexByPath(navItem.path);
+          console.log(`  -> Chapter index: ${chapterIdx}`);
           if (chapterIdx !== -1) {
             chapterIndicesSet.add(chapterIdx);
           }
@@ -346,13 +355,22 @@ export class ReaderStore {
         (a, b) => a - b,
       );
 
+      console.log("Final chapter indices to copy:", chapterIndices);
+
       if (chapterIndices.length === 0) return;
 
       // Build the markdown content for all selected chapters
       const chapterContents: string[] = [];
       for (const chapterIdx of chapterIndices) {
         const chapter = this.chapters[chapterIdx];
-        if (!chapter) continue;
+        if (!chapter) {
+          console.warn(`Chapter ${chapterIdx} not found!`);
+          continue;
+        }
+
+        console.log(
+          `Processing chapter ${chapterIdx}: ${chapter.name} (${chapter.path})`,
+        );
 
         const converter = ContentToMarkdown.create({ basePath: chapter.base });
         const markdown = await converter.convertXMLFile(chapter);
@@ -363,9 +381,15 @@ export class ReaderStore {
           chapter.name ||
           `Chapter ${chapterIdx + 1}`;
 
+        console.log(
+          `  Title: ${chapterTitle}, Content length: ${markdown.length}`,
+        );
+
         // Format with heading
         chapterContents.push(`# ${chapterTitle}\n\n${markdown}`);
       }
+
+      console.log(`Total chapters processed: ${chapterContents.length}`);
 
       // Join all chapters with separators
       const multipleChaptersContent = chapterContents.join("\n\n---\n\n");

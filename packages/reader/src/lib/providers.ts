@@ -12,6 +12,8 @@ import { type ReaderTemplates, parseTemplates } from "../templates/Template";
 import globalTemplatesRaw from "../templates/reader.global.templates.md.txt?raw";
 // @ts-ignore - raw import
 import selectionTemplatesRaw from "../templates/reader.selection.templates.md.txt?raw";
+// @ts-ignore - raw import
+import multipleChaptersTemplatesRaw from "../templates/reader.multiple-chapters.templates.md.txt?raw";
 import { BlobStore } from "./BlobStore";
 import { BookDatabase } from "./BookDatabase";
 import { runMigrations } from "./runMigrations";
@@ -83,6 +85,7 @@ export function provideReaderTemplates(): ReaderTemplates {
   return {
     selection: parseTemplates(selectionTemplatesRaw),
     global: parseTemplates(globalTemplatesRaw),
+    multipleChapters: parseTemplates(multipleChaptersTemplatesRaw),
   };
 }
 

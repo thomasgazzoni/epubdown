@@ -63,5 +63,6 @@ export function parseTemplates(md: string): Template[] {
 export type ReaderTemplates = {
   selection: Template[];
   global: Template[];
+  multipleChapters: Template[];
 };
 export const ReaderTemplatesToken = Symbol("ReaderTemplates");

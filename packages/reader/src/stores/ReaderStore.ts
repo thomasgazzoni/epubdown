@@ -32,6 +32,7 @@ export class ReaderStore {
 
   // UI state
   isSidebarOpen = false;
+  showCopyMultipleModal = false;
   useHtmlMode =
     new URLSearchParams(window.location.search).get("mode") === "html";
   private popoverRef: HTMLElement | null = null;
@@ -60,6 +61,7 @@ export class ReaderStore {
       currentChapterIndex: observable,
       currentBookId: observable,
       isSidebarOpen: observable,
+      showCopyMultipleModal: observable,
       useHtmlMode: observable,
       tocInfo: observable.ref,
       handleLoadBook: action,
@@ -70,6 +72,8 @@ export class ReaderStore {
       loadBookAndChapter: action,
       setSidebarOpen: action,
       toggleSidebar: action,
+      openCopyMultipleModal: action,
+      closeCopyMultipleModal: action,
       setHtmlMode: action,
       handleUrlChange: action,
       handleChapterChange: action,
@@ -313,6 +317,83 @@ export class ReaderStore {
     this.isSidebarOpen = !this.isSidebarOpen;
   }
 
+  openCopyMultipleModal() {
+    this.showCopyMultipleModal = true;
+  }
+
+  closeCopyMultipleModal() {
+    this.showCopyMultipleModal = false;
+  }
+
+  async copyMultipleChapters(selectedNavIndices: number[]): Promise<void> {
+    if (!this.navItems || selectedNavIndices.length === 0) return;
+
+    try {
+      // Map TOC nav items to chapter indices
+      const chapterIndicesSet = new Set<number>();
+      for (const navIdx of selectedNavIndices) {
+        const navItem = this.navItems[navIdx];
+        if (navItem) {
+          const chapterIdx = this.findChapterIndexByPath(navItem.path);
+          if (chapterIdx !== -1) {
+            chapterIndicesSet.add(chapterIdx);
+          }
+        }
+      }
+
+      // Convert to sorted array
+      const chapterIndices = Array.from(chapterIndicesSet).sort(
+        (a, b) => a - b,
+      );
+
+      if (chapterIndices.length === 0) return;
+
+      // Build the markdown content for all selected chapters
+      const chapterContents: string[] = [];
+      for (const chapterIdx of chapterIndices) {
+        const chapter = this.chapters[chapterIdx];
+        if (!chapter) continue;
+
+        const converter = ContentToMarkdown.create({ basePath: chapter.base });
+        const markdown = await converter.convertXMLFile(chapter);
+
+        // Get chapter title from TOC or use filename
+        const chapterTitle =
+          this.chapterLabel(chapterIdx) ||
+          chapter.name ||
+          `Chapter ${chapterIdx + 1}`;
+
+        // Format with heading
+        chapterContents.push(`# ${chapterTitle}\n\n${markdown}`);
+      }
+
+      // Join all chapters with separators
+      const multipleChaptersContent = chapterContents.join("\n\n---\n\n");
+
+      // Use template to format final output
+      const template = this.templates.multipleChapters.find(
+        (t) => t.id === "copy-multiple-chapters",
+      );
+
+      if (template) {
+        // Create enhanced context with multipleChaptersContent
+        const context = {
+          bookTitle: this.metadata?.title || "Unknown Book",
+          bookAuthor: this.metadata?.creator || this.metadata?.author || "",
+          multipleChaptersContent,
+        };
+        const output = await template.render(context);
+        copyToClipboard(output);
+      } else {
+        // Fallback: just copy the concatenated content
+        copyToClipboard(multipleChaptersContent);
+      }
+    } catch (error) {
+      console.error("Error copying multiple chapters:", error);
+      throw error;
+    }
+  }
+
   setHtmlMode(on: boolean) {
     this.useHtmlMode = on;
     // Update URL query param (preserve fragment)
@@ -381,6 +462,16 @@ export class ReaderStore {
 
   private buildGlobalCommands(): Command[] {
     const commands: Command[] = [];
+
+    // Add "Copy multiple chapters" command
+    commands.push({
+      id: "copy-multiple-chapters",
+      label: "Copy multiple chapters",
+      scope: "global",
+      action: () => {
+        this.openCopyMultipleModal();
+      },
+    });
 
     // Generate commands from global templates
     for (const def of this.templates.global) {

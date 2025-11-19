@@ -1,0 +1,6 @@
+# Copy Multiple Chapters
+
+Title: {{ bookTitle }}
+Author: {{ bookAuthor }}
+
+{{ multipleChaptersContent }}

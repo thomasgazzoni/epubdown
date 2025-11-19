@@ -5,6 +5,7 @@ import { useLocation, useRoute } from "wouter";
 import { CommandPalette } from "../command/CommandPalette";
 import { ChapterContent } from "./book/ChapterContent";
 import { ChapterNavigation } from "./book/ChapterNavigation";
+import { CopyMultipleChaptersModal } from "./book/CopyMultipleChaptersModal";
 import { Sidebar } from "./book/Sidebar";
 import { TableOfContents } from "./book/TableOfContents";
 import { OpenOnDrop } from "./components/OpenOnDrop";
@@ -131,6 +132,16 @@ export const ReaderPage = observer(() => {
 
           {/* Command Palette */}
           <CommandPalette />
+
+          {/* Copy Multiple Chapters Modal */}
+          <CopyMultipleChaptersModal
+            isOpen={readerStore.showCopyMultipleModal}
+            navItems={readerStore.navItems || []}
+            onClose={() => readerStore.closeCopyMultipleModal()}
+            onCopy={(selectedIndices) =>
+              readerStore.copyMultipleChapters(selectedIndices)
+            }
+          />
         </div>
       </OpenOnDrop>
     );

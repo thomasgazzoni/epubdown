@@ -24,11 +24,30 @@ export const CopyMultipleChaptersModal = observer(
       }
     }, [isOpen]);
 
-    // Handle keyboard shortcuts
+    // Prevent background scrolling when modal is open
+    useEffect(() => {
+      if (!isOpen) return;
+
+      // Save original overflow style
+      const originalOverflow = document.body.style.overflow;
+
+      // Prevent body scroll
+      document.body.style.overflow = "hidden";
+
+      return () => {
+        // Restore original overflow
+        document.body.style.overflow = originalOverflow;
+      };
+    }, [isOpen]);
+
+    // Handle keyboard shortcuts and prevent propagation to background
     useEffect(() => {
       if (!isOpen) return;
 
       const handleKeyDown = (e: KeyboardEvent) => {
+        // Stop propagation to prevent background from handling any keys
+        e.stopPropagation();
+
         // Escape to close
         if (e.key === "Escape") {
           e.preventDefault();
@@ -46,8 +65,9 @@ export const CopyMultipleChaptersModal = observer(
         }
       };
 
-      document.addEventListener("keydown", handleKeyDown);
-      return () => document.removeEventListener("keydown", handleKeyDown);
+      // Use capture phase to intercept all keyboard events before they reach other handlers
+      document.addEventListener("keydown", handleKeyDown, true);
+      return () => document.removeEventListener("keydown", handleKeyDown, true);
     }, [isOpen, selected, isCopying]);
 
     const handleCheckboxClick = (idx: number, isShift: boolean) => {
@@ -105,6 +125,11 @@ export const CopyMultipleChaptersModal = observer(
       }
     };
 
+    const handleBackdropWheel = (e: React.WheelEvent) => {
+      // Prevent scroll events from propagating to background
+      e.stopPropagation();
+    };
+
     if (!isOpen) return null;
 
     return createPortal(
@@ -112,6 +137,7 @@ export const CopyMultipleChaptersModal = observer(
         className="fixed inset-0 bg-black/50 flex items-center justify-center"
         style={{ zIndex: 9998 }}
         onClick={handleBackdropClick}
+        onWheel={handleBackdropWheel}
       >
         <div
           className="bg-white rounded-lg shadow-xl w-full mx-4"
